@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="drivepool_bg">#0B0B0F</color>
+
+    <!-- Plain NoActionBar host theme; Compose draws everything. -->
+    <style name="Theme.DrivePool" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/drivepool_bg</item>
+    </style>
+</resources>

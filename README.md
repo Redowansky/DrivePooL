@@ -11,7 +11,7 @@
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 
 **One home screen. Every Drive. One total.**
 
@@ -80,7 +80,9 @@ DrivePool is Redowan's personal project, open for friends to poke at. Issues and
 
 ## 📄 License
 
-MIT — see [LICENSE](LICENSE).
+PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE).
+
+Free for personal and noncommercial use. You may use, share, and modify it, but you may **not** use it commercially — selling it, charging for it, or building a paid product or service on it needs the author's permission first.
 
 ---
 

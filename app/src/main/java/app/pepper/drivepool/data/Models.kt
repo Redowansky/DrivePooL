@@ -1,3 +1,7 @@
+// DrivePool — Copyright (c) 2026 Redowansky
+// Licensed under the PolyForm Noncommercial License 1.0.0.
+// See LICENSE in the repository root. Commercial use requires permission.
+
 package app.pepper.drivepool.data
 
 import org.json.JSONArray

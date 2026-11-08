@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- DrivePool — Copyright (c) 2026 Redowansky
+     Licensed under the PolyForm Noncommercial License 1.0.0.
+     See LICENSE in the repository root. Commercial use requires permission. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />

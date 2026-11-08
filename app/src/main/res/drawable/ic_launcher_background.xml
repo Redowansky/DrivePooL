@@ -1,3 +1,6 @@
+<!-- DrivePool — Copyright (c) 2026 Redowansky
+     Licensed under the PolyForm Noncommercial License 1.0.0.
+     See LICENSE in the repository root. Commercial use requires permission. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="#0B0B0F" />

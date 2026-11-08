@@ -18,7 +18,6 @@ import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.ui.DashboardScreen
 import app.pepper.drivepool.ui.theme.DrivePoolTheme
 import com.google.android.gms.auth.UserRecoverableAuthException
-import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.launch
 
@@ -72,10 +71,15 @@ class MainActivity : ComponentActivity() {
                     downloadState = downloadState,
                     onUpdate = { startUpdateDownload() },
                     onAddDrive = {
-                        // One tap: account picker, then Drive read-only consent. Nothing to paste.
+                        // One tap: account picker, then Drive read-only consent.
+                        // Sign out first: Google remembers the last account and
+                        // would otherwise skip the chooser and re-add the same
+                        // account. There is no cap — add as many as you like.
                         error = null
                         hint = null
-                        signInLauncher.launch(Auth.signInIntent(this))
+                        Auth.client(this).signOut().addOnCompleteListener {
+                            signInLauncher.launch(Auth.signInIntent(this))
+                        }
                     },
                     onRefresh = { refreshAll() },
                     onRemoveAccount = { email ->
@@ -107,31 +111,43 @@ class MainActivity : ComponentActivity() {
         hint = null
     }
 
-    /** Refresh actually re-reads quota for the last signed-in Google account. */
+    /** Refresh re-reads quota for EVERY linked account, by email —
+     *  not just the last one signed in. An account whose grant expired
+     *  is marked "Needs sign-in" instead of failing the whole refresh. */
     private fun refreshAll() {
         if (refreshing) return
         refreshing = true
         lifecycleScope.launch {
             try {
-                val last = GoogleSignIn.getLastSignedInAccount(this@MainActivity)
-                if (last == null) {
-                    hint = "No Google account signed in yet — tap Add Drive."
+                val stored = Store.loadAccounts(this@MainActivity)
+                if (stored.isEmpty()) {
+                    hint = "No Google account linked yet — tap Add Drive."
                     return@launch
                 }
-                val token = Auth.accessToken(this@MainActivity, last)
-                if (token == null) {
-                    hint = "Could not refresh silently — tap Add Drive again to sign in."
-                    return@launch
+                var ok = 0
+                val needsSignIn = mutableListOf<String>()
+                for (acct in stored) {
+                    try {
+                        val token = Auth.accessTokenForEmail(this@MainActivity, acct.email)
+                        if (token == null) { needsSignIn.add(acct.email); continue }
+                        addAccountFromToken(token)
+                        ok++
+                    } catch (e: UserRecoverableAuthException) {
+                        needsSignIn.add(acct.email)
+                        Store.upsertAccount(
+                            this@MainActivity, acct.copy(status = "Needs sign-in")
+                        )
+                        accounts = Store.loadAccounts(this@MainActivity)
+                    } catch (_: Exception) {
+                        needsSignIn.add(acct.email)
+                    }
                 }
-                val before = accounts.size
-                addAccountFromToken(token)
-                hint = if (accounts.size > before) {
-                    "Refreshed ${last.email ?: "your Drive"}."
-                } else {
-                    "Refreshed ${last.email ?: "your Drive"}. Other accounts need Add Drive again to re-sync."
+                hint = when {
+                    needsSignIn.isEmpty() -> "Refreshed $ok account${if (ok == 1) "" else "s"}."
+                    ok == 0 -> "Could not refresh — tap Add Drive and pick ${needsSignIn.first()} again."
+                    else -> "Refreshed $ok account${if (ok == 1) "" else "s"}. " +
+                        "${needsSignIn.joinToString()} needs sign-in again — tap Add Drive and pick it."
                 }
-            } catch (e: UserRecoverableAuthException) {
-                hint = "Google needs you to approve again — tap Add Drive."
             } catch (e: Exception) {
                 error = "Refresh failed: ${e.message}"
             } finally {

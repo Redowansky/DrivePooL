@@ -54,4 +54,22 @@ object Auth {
                 GoogleAuthUtil.getToken(ctx, acct, "oauth2:$DRIVE_SCOPE")
             } catch (_: Exception) { null }
         }
+
+    /**
+     * Access token for a stored account by email — no GoogleSignIn state
+     * needed. This is what makes Refresh work for EVERY linked account,
+     * not just the last one signed in: the OAuth grant lives on the
+     * device account, and getToken re-issues from it.
+     * Throws UserRecoverableAuthException when that account needs to
+     * approve again (caller marks it "Needs sign-in").
+     */
+    suspend fun accessTokenForEmail(ctx: Context, email: String): String? =
+        withContext(Dispatchers.IO) {
+            val acct = android.accounts.Account(email, "com.google")
+            try {
+                GoogleAuthUtil.getToken(ctx, acct, "oauth2:$DRIVE_SCOPE")
+            } catch (e: UserRecoverableAuthException) {
+                throw e
+            } catch (_: Exception) { null }
+        }
 }

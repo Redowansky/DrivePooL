@@ -47,7 +47,8 @@ object Auth {
     suspend fun accessToken(ctx: Context, account: GoogleSignInAccount): String? =
         withContext(Dispatchers.IO) {
             try {
-                GoogleAuthUtil.getToken(ctx, account.account, "oauth2:$DRIVE_SCOPE")
+                val acct = account.account ?: return@withContext null
+                GoogleAuthUtil.getToken(ctx, acct, "oauth2:$DRIVE_SCOPE")
             } catch (_: Exception) { null }
         }
 }

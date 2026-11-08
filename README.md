@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.2.3-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.2.3)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.3.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -27,12 +27,12 @@
 
 | Feature | Details |
 |---|---|
-| 📊 **Pooled total bar** | Total used / total limit across *all* linked Drives, on one gradient bar (blue → green → yellow) |
-| 🟦🟩🟨 **Per-account cards** | Each Drive gets its own card — email, used / limit, coloured progress bar, Connected / Syncing status |
+| 📊 **Pooled ring gauge** | Total used / total limit across *all* linked Drives, on a gradient ring with Used / Total stats and a Live Syncing pill |
+| 🟦🟩🟨 **Per-account cards** | Each Drive gets its own card — email, used / limit, coloured progress bar, Connected status, and a red trash button to unlink it |
 | 🛰️ **Orbit animation** | A little live orbit in the middle of the dashboard, just because it looks good |
 | 🧮 **Stat tiles** | Today (GB added today) · Accounts linked · Total files · Total free space |
 | 🔐 **Read-only by design** | Drive `readonly` scope only — the app can *see* your storage, never edit or delete files |
-| 👆 **Long-press to remove** | Long-press any account card to unlink it |
+| 🗑️ **Red trash per account** | Tap the trash on an account card to unlink that Drive |
 
 ## 📱 Screenshots
 
@@ -68,6 +68,7 @@
 - [x] **v0.2.1** — Own launcher icon: blue cloud on dark, no longer Wansky's green triangle
 - [x] **v0.2.2** — In-app updates (own OkHttp downloader, live progress, exact errors) + TB/PB storage sizes
 - [x] **v0.2.3** — Unlimited accounts: Add Drive signs out first so the chooser always appears; Refresh re-reads every account
+- [x] **v0.3.0** — Redesign (his mockup): ring gauge total card, collapsible accounts section, red trash on each account card
 - [ ] **v0.2** — Browse files per account, search across accounts
 - [ ] **v0.3** — Move files between Drives, union-style pooled uploads (most-free-space first)
 - [ ] **v0.4** — Signed release builds + in-app updater

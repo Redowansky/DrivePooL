@@ -6,10 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,7 +23,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -34,6 +35,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,8 +45,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pepper.drivepool.data.ACCOUNT_COLORS
@@ -69,8 +75,9 @@ fun DashboardScreen(
     val totalUsed = accounts.sumOf { it.usedBytes }
     val totalLimit = accounts.sumOf { it.limitBytes }
     val totalFree = accounts.sumOf { it.freeBytes }
-    val totalFiles = accounts.sumOf { it.fileCount }
-    val todayBytes = accounts.sumOf { it.todayBytes }
+    val usedFraction = if (totalLimit > 0) totalUsed.toFloat() / totalLimit else 0f
+    val usedPercent = (usedFraction * 100).toInt()
+    var accountsExpanded by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -153,15 +160,7 @@ fun DashboardScreen(
             Spacer(Modifier.height(8.dp))
             Text("Tap Add Drive at the top, pick a Google account, and grant Drive read-only access. That's it — quotas are read from Google Drive and pooled here.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
         } else {
-            accounts.forEachIndexed { index, account ->
-                AccountCard(account, index, onRemoveAccount)
-                Spacer(Modifier.height(12.dp))
-            }
-
-            Orbit()
-            Spacer(Modifier.height(16.dp))
-
-            // Total pooled card.
+            // Total pooled card — ring gauge, like his design mockup.
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -170,42 +169,90 @@ fun DashboardScreen(
                     .padding(16.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh all", tint = Color.White)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RingGauge(
+                        fraction = usedFraction,
+                        usedText = formatGb(totalUsed),
+                        totalText = "/ ${formatGb(totalLimit)}"
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(120.dp)
+                            .background(Color(0xFF2E2E36))
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        StorageStat("Used Space", formatGb(totalUsed), Color(0xFF4A90E2))
+                        Spacer(Modifier.height(14.dp))
+                        StorageStat("Total Storage", formatGb(totalLimit), Color(0xFF9A9AA5))
+                        Spacer(Modifier.height(14.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFF12351F))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4ADE80)))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Live Syncing", color = Color(0xFF4ADE80), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                GradientBar(
+                    fraction = usedFraction,
+                    colors = listOf(Color(0xFF4A90E2), Color(0xFF4ADE80), Color(0xFFFACC15))
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "$usedPercent% used • ${formatGb(totalFree)} free",
+                    color = Color(0xFF9A9AA5), fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Accounts — collapsible section, one card per Drive.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(CardBg)
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFF2A2A32)),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Filled.Cloud, contentDescription = null, tint = Color(0xFF4A90E2)) }
+                    Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("DrivePool", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("Unified dashboard · all drives", color = Color(0xFF9A9AA5), fontSize = 13.sp)
                     }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF12351F))
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4ADE80)))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Live Syncing", color = Color(0xFF4ADE80), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = { accountsExpanded = !accountsExpanded }) {
+                        Icon(
+                            if (accountsExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = if (accountsExpanded) "Collapse" else "Expand",
+                            tint = Color.White
+                        )
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Row {
-                    Text(formatGb(totalUsed), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(6.dp))
-                    Text("/ ${formatGb(totalLimit)}", color = Color(0xFF9A9AA5), fontSize = 18.sp, modifier = Modifier.align(Alignment.Bottom))
-                }
-                Spacer(Modifier.height(10.dp))
-                GradientBar(
-                    fraction = if (totalLimit > 0) totalUsed.toFloat() / totalLimit else 0f,
-                    colors = listOf(Color(0xFF4A90E2), Color(0xFF4ADE80), Color(0xFFFACC15))
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatTile("TODAY", "+${formatGb(todayBytes)}", Modifier.weight(1f))
-                    StatTile("ACCOUNTS", "${accounts.size} linked", Modifier.weight(1f))
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatTile("FILES", "$totalFiles", Modifier.weight(1f))
-                    StatTile("FREE", formatGb(totalFree), Modifier.weight(1f))
+                if (accountsExpanded) {
+                    Spacer(Modifier.height(12.dp))
+                    accounts.forEachIndexed { index, account ->
+                        AccountCard(account, index, onRemoveAccount)
+                        if (index < accounts.lastIndex) Spacer(Modifier.height(12.dp))
+                    }
                 }
             }
         }
@@ -213,7 +260,55 @@ fun DashboardScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun StorageStat(label: String, value: String, dotColor: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(dotColor))
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(label, color = Color(0xFF9A9AA5), fontSize = 13.sp)
+            Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun RingGauge(fraction: Float, usedText: String, totalText: String) {
+    Box(
+        modifier = Modifier.size(150.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(150.dp)) {
+            val stroke = 13f
+            drawArc(
+                color = Color(0xFF2E2E36),
+                startAngle = -90f, sweepAngle = 360f, useCenter = false,
+                style = Stroke(width = stroke, cap = StrokeCap.Round)
+            )
+            if (fraction > 0f) {
+                drawArc(
+                    brush = Brush.sweepGradient(
+                        listOf(
+                            Color(0xFF4A90E2), Color(0xFF22D3EE),
+                            Color(0xFFA78BFA), Color(0xFF4A90E2)
+                        ),
+                        center = Offset(size.width / 2, size.height / 2)
+                    ),
+                    startAngle = -90f, sweepAngle = 360f * fraction.coerceIn(0f, 1f),
+                    useCenter = false,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                )
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Filled.Storage, contentDescription = null, tint = Color(0xFF4A90E2), modifier = Modifier.size(22.dp))
+            Spacer(Modifier.height(4.dp))
+            Text(usedText, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(totalText, color = Color(0xFF9A9AA5), fontSize = 14.sp)
+        }
+    }
+}
+
 @Composable
 private fun AccountCard(account: DriveAccount, index: Int, onRemove: (String) -> Unit) {
     val color = Color(ACCOUNT_COLORS[index % ACCOUNT_COLORS.size])
@@ -221,8 +316,7 @@ private fun AccountCard(account: DriveAccount, index: Int, onRemove: (String) ->
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(CardBg)
-            .combinedClickable(onClick = {}, onLongClick = { onRemove(account.email) })
+            .background(Color(0xFF121216))
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -232,6 +326,9 @@ private fun AccountCard(account: DriveAccount, index: Int, onRemove: (String) ->
             ) { Icon(Icons.Filled.Cloud, contentDescription = null, tint = color) }
             Spacer(Modifier.width(10.dp))
             Text(account.email, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+            IconButton(onClick = { onRemove(account.email) }) {
+                Icon(Icons.Filled.Delete, contentDescription = "Remove this account", tint = Color(0xFFEF5350))
+            }
         }
         Spacer(Modifier.height(12.dp))
         GradientBar(fraction = account.usedFraction, colors = listOf(color))
@@ -261,20 +358,6 @@ private fun GradientBar(fraction: Float, colors: List<Color>) {
                 .clip(RoundedCornerShape(4.dp))
                 .background(if (colors.size > 1) Brush.horizontalGradient(colors) else Brush.horizontalGradient(listOf(colors[0], colors[0])))
         )
-    }
-}
-
-@Composable
-private fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF121216))
-            .padding(14.dp)
-    ) {
-        Text(label, color = Color(0xFF9A9AA5), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(value, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
     }
 }
 

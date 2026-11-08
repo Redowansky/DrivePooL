@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -60,9 +59,12 @@ import kotlin.math.sin
 fun DashboardScreen(
     accounts: List<DriveAccount>,
     error: String?,
+    hint: String?,
     showSettings: Boolean,
     webClientId: String,
     onWebClientIdChange: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onCloseSettings: () -> Unit,
     onSaveSettings: () -> Unit,
     onAddDrive: () -> Unit,
     onRefresh: () -> Unit,
@@ -89,7 +91,7 @@ fun DashboardScreen(
             IconButton(onClick = onRefresh) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White)
             }
-            IconButton(onClick = { onSaveSettings() }) {
+            IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Color.White)
             }
             Button(
@@ -122,12 +124,28 @@ fun DashboardScreen(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
+                Spacer(Modifier.height(12.dp))
+                Row {
+                    Button(
+                        onClick = onSaveSettings,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))
+                    ) { Text("Save", fontWeight = FontWeight.Bold) }
+                    Spacer(Modifier.width(10.dp))
+                    Button(
+                        onClick = onCloseSettings,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32), contentColor = Color.White)
+                    ) { Text("Close") }
+                }
             }
         }
 
         if (error != null) {
             Spacer(Modifier.height(12.dp))
             Text(error, color = Color(0xFFEF5350), fontSize = 13.sp)
+        }
+        if (hint != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(hint, color = Color(0xFF9A9AA5), fontSize = 13.sp)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -136,16 +154,10 @@ fun DashboardScreen(
             Orbit()
             Spacer(Modifier.height(16.dp))
             Text("Add your first Drive", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "Sign in with Google (Drive read-only). Quotas are read from Google Drive and pooled here.",
-                color = Color(0xFF9A9AA5), fontSize = 13.sp
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onAddDrive, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("Add Drive")
-            }
+            Spacer(Modifier.height(8.dp))
+            Text("1. Tap the gear ⚙️ above and paste your Web client ID.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+            Text("2. Tap Add Drive at the top and sign in with Google (Drive read-only).", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+            Text("Quotas are read from Google Drive and pooled here — there is only one Add Drive button, at the top.", color = Color(0xFF9A9AA5), fontSize = 13.sp)
         } else {
             accounts.forEachIndexed { index, account ->
                 AccountCard(account, index, onRemoveAccount)

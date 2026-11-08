@@ -17,12 +17,14 @@ import app.pepper.drivepool.data.Store
 import app.pepper.drivepool.ui.DashboardScreen
 import app.pepper.drivepool.ui.theme.DrivePoolTheme
 import com.google.android.gms.auth.UserRecoverableAuthException
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var accounts by mutableStateOf<List<DriveAccount>>(emptyList())
     private var error by mutableStateOf<String?>(null)
+    private var hint by mutableStateOf<String?>(null)
     private var showSettings by mutableStateOf(false)
     private var webClientId by mutableStateOf("")
     private var refreshing by mutableStateOf(false)
@@ -64,19 +66,27 @@ class MainActivity : ComponentActivity() {
                 DashboardScreen(
                     accounts = accounts,
                     error = error,
+                    hint = hint,
                     showSettings = showSettings,
                     webClientId = webClientId,
                     onWebClientIdChange = { webClientId = it },
+                    onOpenSettings = { error = null; hint = null; showSettings = true },
+                    onCloseSettings = { showSettings = false },
                     onSaveSettings = {
-                        showSettings = !showSettings
-                        if (!showSettings) Store.setWebClientId(this, webClientId)
+                        Store.setWebClientId(this, webClientId)
+                        showSettings = false
+                        error = null
+                        hint = "Web client ID saved. Now tap Add Drive at the top to sign in."
                     },
                     onAddDrive = {
+                        // Add Drive only signs in — it never opens Settings.
+                        // If the client ID is missing, say so and point at the gear.
                         if (webClientId.isBlank()) {
-                            showSettings = true
-                            error = "Enter your Web client ID in Settings first (your own Google Cloud project)."
+                            error = null
+                            hint = "Add your Web client ID in Settings first — tap the gear ⚙️ above."
                         } else {
                             error = null
+                            hint = null
                             signInLauncher.launch(Auth.signInIntent(this, webClientId))
                         }
                     },
@@ -107,12 +117,39 @@ class MainActivity : ComponentActivity() {
         Store.upsertAccount(this, account)
         accounts = Store.loadAccounts(this)
         error = null
+        hint = null
     }
 
+    /** Refresh actually re-reads quota for the last signed-in Google account. */
     private fun refreshAll() {
         if (refreshing) return
         refreshing = true
-        error = "Refreshing needs a fresh sign-in per account in v0.1 — tap Add Drive again to re-sync an account."
-        refreshing = false
+        lifecycleScope.launch {
+            try {
+                val last = GoogleSignIn.getLastSignedInAccount(this@MainActivity)
+                if (last == null) {
+                    hint = "No Google account signed in yet — tap Add Drive."
+                    return@launch
+                }
+                val token = Auth.accessToken(this@MainActivity, last)
+                if (token == null) {
+                    hint = "Could not refresh silently — tap Add Drive again to sign in."
+                    return@launch
+                }
+                val before = accounts.size
+                addAccountFromToken(token)
+                hint = if (accounts.size > before) {
+                    "Refreshed ${last.email ?: "your Drive"}."
+                } else {
+                    "Refreshed ${last.email ?: "your Drive"}. Other accounts need Add Drive again to re-sync."
+                }
+            } catch (e: UserRecoverableAuthException) {
+                hint = "Google needs you to approve again — tap Add Drive."
+            } catch (e: Exception) {
+                error = "Refresh failed: ${e.message}"
+            } finally {
+                refreshing = false
+            }
+        }
     }
 }

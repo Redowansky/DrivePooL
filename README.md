@@ -69,7 +69,7 @@
 - [x] **v0.2.2** — In-app updates (own OkHttp downloader, live progress, exact errors) + TB/PB storage sizes
 - [x] **v0.2.3** — Unlimited accounts: Add Drive signs out first so the chooser always appears; Refresh re-reads every account
 - [x] **v0.3.0** — Redesign (his mockup): ring gauge total card, collapsible accounts section, red trash on each account card
-- [x] **v0.3.1** — Gauge refinement (his v2 mockup): ring shows only the used sliver, full "14.1 GB / 11.00 TB (0.13% used • 10.98 TB free)" line
+- [x] **v0.3.1** — Gauge refinement (his v2 mockup): ring shows only the used sliver, full "14.1 GB / 11.00 TB (0.13% used • 10.98 TB free)" line; app icon rebuilt from his cloud artwork, cloud centred in the safe zone so launchers can't crop it into a blue blob
 - [ ] **v0.2** — Browse files per account, search across accounts
 - [ ] **v0.3** — Move files between Drives, union-style pooled uploads (most-free-space first)
 - [ ] **v0.4** — Signed release builds + in-app updater

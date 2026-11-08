@@ -55,6 +55,7 @@ import app.pepper.drivepool.data.ACCOUNT_COLORS
 import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.data.formatGb
+import app.pepper.drivepool.data.formatPercent
 import app.pepper.drivepool.ui.theme.CardBg
 import app.pepper.drivepool.ui.theme.CardBorder
 import kotlin.math.cos
@@ -76,7 +77,14 @@ fun DashboardScreen(
     val totalLimit = accounts.sumOf { it.limitBytes }
     val totalFree = accounts.sumOf { it.freeBytes }
     val usedFraction = if (totalLimit > 0) totalUsed.toFloat() / totalLimit else 0f
-    val usedPercent = (usedFraction * 100).toInt()
+    // Percent with enough decimals to mean something at TB scale:
+    // 0.13% of 11 TB, not "0%".
+    val usedPercentText = formatPercent(usedFraction * 100)
+    // The ring shows only the used sliver — but at 0.13% the true arc
+    // is under half a degree and invisible, so draw a minimum tick
+    // (~2 degrees) so the used mark can be seen at all. The exact
+    // number is in the text under the bar.
+    val ringFraction = maxOf(usedFraction, if (totalUsed > 0) 0.006f else 0f)
     var accountsExpanded by remember { mutableStateOf(true) }
 
     Column(
@@ -176,7 +184,7 @@ fun DashboardScreen(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RingGauge(
-                        fraction = usedFraction,
+                        fraction = ringFraction,
                         usedText = formatGb(totalUsed),
                         totalText = "/ ${formatGb(totalLimit)}"
                     )
@@ -213,7 +221,7 @@ fun DashboardScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "$usedPercent% used • ${formatGb(totalFree)} free",
+                    "${formatGb(totalUsed)} / ${formatGb(totalLimit)} ($usedPercentText used • ${formatGb(totalFree)} free)",
                     color = Color(0xFF9A9AA5), fontSize = 13.sp,
                     modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
                 )

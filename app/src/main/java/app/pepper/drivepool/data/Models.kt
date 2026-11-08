@@ -56,6 +56,15 @@ data class DriveAccount(
  * 5 TB of Google One shows as "5.00 TB", not "5000 GB".
  * Small values stay in GB so the 15 GB free tier still reads "15.0 GB".
  */
+/** Percent with enough decimals to mean something at TB scale:
+ *  0.13% (not "0%") when the used share is tiny, 42.5% in the middle,
+ *  87% when it is large. */
+fun formatPercent(percent: Float): String = when {
+    percent < 1f -> "%.2f%%".format(percent)
+    percent < 10f -> "%.1f%%".format(percent)
+    else -> "%.0f%%".format(percent)
+}
+
 fun formatGb(bytes: Long): String {
     val b = bytes.toDouble()
     return when {

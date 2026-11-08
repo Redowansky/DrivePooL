@@ -51,9 +51,21 @@ data class DriveAccount(
     }
 }
 
+/**
+ * Human storage size, decimal units like Google reports them.
+ * 5 TB of Google One shows as "5.00 TB", not "5000 GB".
+ * Small values stay in GB so the 15 GB free tier still reads "15.0 GB".
+ */
 fun formatGb(bytes: Long): String {
-    val gb = bytes / 1_000_000_000.0
-    return if (gb >= 100) "%.0f GB".format(gb) else "%.1f GB".format(gb)
+    val b = bytes.toDouble()
+    return when {
+        b >= 1_000_000_000_000_000.0 -> "%.2f PB".format(b / 1_000_000_000_000_000.0)
+        b >= 1_000_000_000_000.0 -> "%.2f TB".format(b / 1_000_000_000_000.0)
+        else -> {
+            val gb = b / 1_000_000_000.0
+            if (gb >= 100) "%.0f GB".format(gb) else "%.1f GB".format(gb)
+        }
+    }
 }
 
 val ACCOUNT_COLORS = listOf(0xFF4A90E2, 0xFF4ADE80, 0xFFFACC15, 0xFFA78BFA, 0xFF22D3EE)

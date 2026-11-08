@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pepper.drivepool.data.ACCOUNT_COLORS
 import app.pepper.drivepool.data.DriveAccount
+import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.data.formatGb
 import app.pepper.drivepool.ui.theme.CardBg
 import app.pepper.drivepool.ui.theme.CardBorder
@@ -58,6 +59,9 @@ fun DashboardScreen(
     accounts: List<DriveAccount>,
     error: String?,
     hint: String?,
+    updateInfo: Updater.UpdateInfo?,
+    downloadState: Updater.DownloadState,
+    onUpdate: () -> Unit,
     onAddDrive: () -> Unit,
     onRefresh: () -> Unit,
     onRemoveAccount: (String) -> Unit
@@ -88,6 +92,47 @@ fun DashboardScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                 shape = RoundedCornerShape(24.dp)
             ) { Text("Add Drive", fontWeight = FontWeight.Bold) }
+        }
+
+        if (updateInfo != null) {
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF12351F))
+                    .padding(14.dp)
+            ) {
+                Text("Update available — v${updateInfo.versionName}", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(updateInfo.notes, color = Color(0xFF9A9AA5), fontSize = 13.sp)
+                Spacer(Modifier.height(10.dp))
+                when (val s = downloadState) {
+                    is Updater.DownloadState.Progress -> {
+                        val frac = if (s.total > 0) (s.done.toFloat() / s.total).coerceIn(0f, 1f) else 0f
+                        GradientBar(fraction = frac, colors = listOf(Color(0xFF4ADE80)))
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Downloading… ${formatGb(s.done)} / ${if (s.total > 0) formatGb(s.total) else "?"}",
+                            color = Color(0xFF9A9AA5), fontSize = 13.sp
+                        )
+                    }
+                    is Updater.DownloadState.Failed -> {
+                        Text("Download failed: ${s.reason}", color = Color(0xFFEF5350), fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = onUpdate, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))) {
+                            Text("Retry", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Updater.DownloadState.Done -> {
+                        Text("Download finished — the installer should open. If not, tap Update again.", color = Color(0xFF9A9AA5), fontSize = 13.sp)
+                    }
+                    else -> {
+                        Button(onClick = onUpdate, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4ADE80), contentColor = Color.Black)) {
+                            Text("Update", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
         }
 
         if (error != null) {

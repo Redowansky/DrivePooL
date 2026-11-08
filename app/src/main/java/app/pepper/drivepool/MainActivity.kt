@@ -14,6 +14,7 @@ import app.pepper.drivepool.data.Auth
 import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.DriveApi
 import app.pepper.drivepool.data.Store
+import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.ui.DashboardScreen
 import app.pepper.drivepool.ui.theme.DrivePoolTheme
 import com.google.android.gms.auth.UserRecoverableAuthException
@@ -26,6 +27,8 @@ class MainActivity : ComponentActivity() {
     private var error by mutableStateOf<String?>(null)
     private var hint by mutableStateOf<String?>(null)
     private var refreshing by mutableStateOf(false)
+    private var updateInfo by mutableStateOf<Updater.UpdateInfo?>(null)
+    private var downloadState by mutableStateOf<Updater.DownloadState>(Updater.DownloadState.Idle)
 
     private val signInLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -58,12 +61,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         accounts = Store.loadAccounts(this)
+        checkForUpdate()
         setContent {
             DrivePoolTheme {
                 DashboardScreen(
                     accounts = accounts,
                     error = error,
                     hint = hint,
+                    updateInfo = updateInfo,
+                    downloadState = downloadState,
+                    onUpdate = { startUpdateDownload() },
                     onAddDrive = {
                         // One tap: account picker, then Drive read-only consent. Nothing to paste.
                         error = null
@@ -129,6 +136,26 @@ class MainActivity : ComponentActivity() {
                 error = "Refresh failed: ${e.message}"
             } finally {
                 refreshing = false
+            }
+        }
+    }
+
+    /** Checks R2 version.json once at launch. Fail-open: any problem = no banner. */
+    private fun checkForUpdate() {
+        lifecycleScope.launch {
+            val remote = Updater.check() ?: return@launch
+            if (remote.versionCode > BuildConfig.VERSION_CODE) {
+                updateInfo = remote
+            }
+        }
+    }
+
+    private fun startUpdateDownload() {
+        val info = updateInfo ?: return
+        if (downloadState is Updater.DownloadState.Progress) return
+        lifecycleScope.launch {
+            Updater.download(this@MainActivity, info.apkUrl) { state ->
+                downloadState = state
             }
         }
     }

@@ -6,7 +6,6 @@ import android.content.Context
 object Store {
     private const val PREFS = "drivepool"
     private const val KEY_ACCOUNTS = "accounts"
-    private const val KEY_WEB_CLIENT_ID = "web_client_id"
 
     private fun prefs(ctx: Context) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -27,12 +26,5 @@ object Store {
 
     fun removeAccount(ctx: Context, email: String) {
         saveAccounts(ctx, loadAccounts(ctx).filterNot { it.email.equals(email, ignoreCase = true) })
-    }
-
-    fun webClientId(ctx: Context): String =
-        prefs(ctx).getString(KEY_WEB_CLIENT_ID, "") ?: ""
-
-    fun setWebClientId(ctx: Context, id: String) {
-        prefs(ctx).edit().putString(KEY_WEB_CLIENT_ID, id.trim()).apply()
     }
 }

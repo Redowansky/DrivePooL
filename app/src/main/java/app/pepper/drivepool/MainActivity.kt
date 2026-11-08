@@ -25,8 +25,6 @@ class MainActivity : ComponentActivity() {
     private var accounts by mutableStateOf<List<DriveAccount>>(emptyList())
     private var error by mutableStateOf<String?>(null)
     private var hint by mutableStateOf<String?>(null)
-    private var showSettings by mutableStateOf(false)
-    private var webClientId by mutableStateOf("")
     private var refreshing by mutableStateOf(false)
 
     private val signInLauncher = registerForActivityResult(
@@ -60,35 +58,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         accounts = Store.loadAccounts(this)
-        webClientId = Store.webClientId(this)
         setContent {
             DrivePoolTheme {
                 DashboardScreen(
                     accounts = accounts,
                     error = error,
                     hint = hint,
-                    showSettings = showSettings,
-                    webClientId = webClientId,
-                    onWebClientIdChange = { webClientId = it },
-                    onOpenSettings = { error = null; hint = null; showSettings = true },
-                    onCloseSettings = { showSettings = false },
-                    onSaveSettings = {
-                        Store.setWebClientId(this, webClientId)
-                        showSettings = false
-                        error = null
-                        hint = "Web client ID saved. Now tap Add Drive at the top to sign in."
-                    },
                     onAddDrive = {
-                        // Add Drive only signs in — it never opens Settings.
-                        // If the client ID is missing, say so and point at the gear.
-                        if (webClientId.isBlank()) {
-                            error = null
-                            hint = "Add your Web client ID in Settings first — tap the gear ⚙️ above."
-                        } else {
-                            error = null
-                            hint = null
-                            signInLauncher.launch(Auth.signInIntent(this, webClientId))
-                        }
+                        // One tap: account picker, then Drive read-only consent. Nothing to paste.
+                        error = null
+                        hint = null
+                        signInLauncher.launch(Auth.signInIntent(this))
                     },
                     onRefresh = { refreshAll() },
                     onRemoveAccount = { email ->

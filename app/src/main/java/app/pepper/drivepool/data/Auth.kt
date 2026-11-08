@@ -14,29 +14,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Google sign-in for Drive, read-only scope.
+ * Google sign-in for Drive, read-only scope — same flow as the Library app.
  *
- * The Web client ID is NOT baked into the app. The user enters their own
- * Web client ID (from their own Google Cloud project, same one they use
- * for Round Sync / rclone) in Settings — it stays on this device only.
- * The matching Android OAuth client for package app.pepper.drivepool must
- * exist in that same Cloud project, otherwise sign-in fails with code 10.
+ * The Web client ID is baked into the app (DrivePool Cloud project). The
+ * user just taps Add Drive, picks a Google account, and grants Drive
+ * read-only access. No pasting, no Console steps for the user.
+ * The matching Android OAuth client for package app.pepper.drivepool
+ * (signed with the stable release key) exists in the same Cloud project,
+ * otherwise sign-in fails with code 10.
  */
 object Auth {
     const val RC_SIGN_IN = 9001
     const val DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
-    fun client(ctx: Context, webClientId: String): GoogleSignInClient {
+    /** Web OAuth client ID of the DrivePool Cloud project (public identifier, not a secret). */
+    const val WEB_CLIENT_ID = "229634430100-ep0ig8nuc5kp3ciaj3clfs7k6i6hgbat.apps.googleusercontent.com"
+
+    fun client(ctx: Context): GoogleSignInClient {
         val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(webClientId)
+            .requestIdToken(WEB_CLIENT_ID)
             .requestEmail()
             .requestScopes(Scope(DRIVE_SCOPE))
             .build()
         return GoogleSignIn.getClient(ctx, options)
     }
 
-    fun signInIntent(ctx: Context, webClientId: String): Intent =
-        client(ctx, webClientId).signInIntent
+    fun signInIntent(ctx: Context): Intent = client(ctx).signInIntent
 
     fun accountFromResult(data: Intent?): GoogleSignInAccount? {
         val task = GoogleSignIn.getSignedInAccountFromIntent(data)

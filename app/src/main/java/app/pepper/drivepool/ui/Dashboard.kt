@@ -27,12 +27,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -60,12 +58,6 @@ fun DashboardScreen(
     accounts: List<DriveAccount>,
     error: String?,
     hint: String?,
-    showSettings: Boolean,
-    webClientId: String,
-    onWebClientIdChange: (String) -> Unit,
-    onOpenSettings: () -> Unit,
-    onCloseSettings: () -> Unit,
-    onSaveSettings: () -> Unit,
     onAddDrive: () -> Unit,
     onRefresh: () -> Unit,
     onRemoveAccount: (String) -> Unit
@@ -91,52 +83,11 @@ fun DashboardScreen(
             IconButton(onClick = onRefresh) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White)
             }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Color.White)
-            }
             Button(
                 onClick = onAddDrive,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                 shape = RoundedCornerShape(24.dp)
             ) { Text("Add Drive", fontWeight = FontWeight.Bold) }
-        }
-
-        if (showSettings) {
-            Spacer(Modifier.height(16.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(CardBg)
-                    .padding(16.dp)
-            ) {
-                Text("Your Google OAuth client", color = Color.White, fontWeight = FontWeight.Bold)
-                Text(
-                    "Paste the Web client ID from your own Google Cloud project " +
-                        "(the same project you use for Round Sync). It stays on this phone only — never uploaded.",
-                    color = Color(0xFF9A9AA5), fontSize = 13.sp
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = webClientId,
-                    onValueChange = onWebClientIdChange,
-                    label = { Text("Web client ID") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-                Row {
-                    Button(
-                        onClick = onSaveSettings,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))
-                    ) { Text("Save", fontWeight = FontWeight.Bold) }
-                    Spacer(Modifier.width(10.dp))
-                    Button(
-                        onClick = onCloseSettings,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32), contentColor = Color.White)
-                    ) { Text("Close") }
-                }
-            }
         }
 
         if (error != null) {
@@ -155,9 +106,7 @@ fun DashboardScreen(
             Spacer(Modifier.height(16.dp))
             Text("Add your first Drive", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("1. Tap the gear ⚙️ above and paste your Web client ID.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
-            Text("2. Tap Add Drive at the top and sign in with Google (Drive read-only).", color = Color(0xFF9A9AA5), fontSize = 14.sp)
-            Text("Quotas are read from Google Drive and pooled here — there is only one Add Drive button, at the top.", color = Color(0xFF9A9AA5), fontSize = 13.sp)
+            Text("Tap Add Drive at the top, pick a Google account, and grant Drive read-only access. That's it — quotas are read from Google Drive and pooled here.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
         } else {
             accounts.forEachIndexed { index, account ->
                 AccountCard(account, index, onRemoveAccount)

@@ -68,6 +68,21 @@ class UploadService : Service() {
             ctx.startForegroundService(intent)
         }
 
+        /** v0.7.1: create the channel at app start too, so the
+         *  "Uploads" channel exists (and the notification toggle is
+         *  on) before any upload ever runs — not only when the
+         *  service first starts. Idempotent; safe to call twice. */
+        fun createNotificationChannel(ctx: Context) {
+            val manager = ctx.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Uploads",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply { description = "DrivePool file uploads and moves" }
+            )
+        }
+
         fun startMove(
             ctx: Context,
             srcEmail: String,
@@ -101,14 +116,7 @@ class UploadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                "Uploads",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply { description = "DrivePool file uploads and moves" }
-        )
+        createNotificationChannel(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

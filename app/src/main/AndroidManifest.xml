@@ -10,6 +10,10 @@
     <!-- v0.6.0: background uploads run as a dataSync foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- v0.7.1: Android 13+ needs this at runtime or the upload
+         notification never appears in the shade (App Info shows the
+         toggle greyed off as "does not send notifications"). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"

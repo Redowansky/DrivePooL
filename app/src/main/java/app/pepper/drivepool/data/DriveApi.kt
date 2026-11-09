@@ -129,17 +129,30 @@ object DriveApi {
         }
     } catch (_: Exception) { null }
 
+    /** v0.7.1: retry once after a short delay before giving up.
+     *  A single failed call (network hiccup, Google 429/500, token
+     *  blip) used to surface as the scary "Check the Drive API is
+     *  enabled" error; most of those succeed on the second try. */
     suspend fun fetchQuota(token: String): Quota? = withContext(Dispatchers.IO) {
-        val json = get(
-            token,
-            "https://www.googleapis.com/drive/v3/about" +
-                "?fields=user(emailAddress),storageQuota(limit,usage)"
-        ) ?: return@withContext null
-        val email = json.optJSONObject("user")?.optString("emailAddress") ?: return@withContext null
-        val q = json.optJSONObject("storageQuota") ?: return@withContext null
+        var json: JSONObject? = null
+        repeat(2) { attempt ->
+            json = get(
+                token,
+                "https://www.googleapis.com/drive/v3/about" +
+                    "?fields=user(emailAddress),storageQuota(limit,usage)"
+            )
+            if (json != null) return@withContext parseQuota(json!!)
+            if (attempt == 0) kotlinx.coroutines.delay(1000)
+        }
+        null
+    }
+
+    private fun parseQuota(json: JSONObject): Quota? {
+        val email = json.optJSONObject("user")?.optString("emailAddress") ?: return null
+        val q = json.optJSONObject("storageQuota") ?: return null
         val limit = q.optString("limit", "0").toLongOrNull() ?: 0L
         val used = q.optString("usage", "0").toLongOrNull() ?: 0L
-        Quota(email, used, limit)
+        return Quota(email, used, limit)
     }
 
     suspend fun fetchFileStats(token: String, todayOnly: Boolean): FileStats =

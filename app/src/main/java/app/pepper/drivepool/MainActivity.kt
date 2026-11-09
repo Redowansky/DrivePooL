@@ -4,10 +4,13 @@
 
 package app.pepper.drivepool
 
+import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
@@ -33,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import java.io.File
@@ -92,6 +96,45 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let { startPooledUpload(it) } }
 
+    // v0.7.1: Android 13+ needs POST_NOTIFICATIONS at runtime, or the
+    // upload notification never appears (App Info shows the toggle
+    // greyed off). The callback always proceeds to the pending action
+    // — a denial never blocks the upload; the in-app progress dialog
+    // still shows. Prompted at most once ever (flag in prefs).
+    private var pendingAfterNotifPermission: (() -> Unit)? = null
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        val run = pendingAfterNotifPermission
+        pendingAfterNotifPermission = null
+        run?.invoke()
+    }
+
+    /** Runs [action] after the notification permission is settled.
+     *  No-op on Android < 13 (no runtime permission), or when already
+     *  granted, or when already asked once — the prompt shows once. */
+    private fun withNotificationPermission(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            action()
+            return
+        }
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            action()
+            return
+        }
+        val prefs = getSharedPreferences("drivepool", MODE_PRIVATE)
+        if (prefs.getBoolean("notif_perm_asked", false)) {
+            action()
+            return
+        }
+        prefs.edit().putBoolean("notif_perm_asked", true).apply()
+        pendingAfterNotifPermission = action
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     private val signInLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -124,6 +167,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         accounts = Store.loadAccounts(this)
+        // v0.7.1: create the "Uploads" channel at app start so the
+        // notification toggle exists before any upload runs, and ask
+        // once for the runtime notification permission (Android 13+).
+        UploadService.createNotificationChannel(this)
+        withNotificationPermission {}
         checkForUpdate()
         setContent {
             DrivePoolTheme {
@@ -154,7 +202,15 @@ class MainActivity : ComponentActivity() {
                             },
                             onOpenAccount = { openBrowser(it.email) },
                             onSearch = { screen = Screen.Search },
-                            onUpload = { uploadPickerLauncher.launch("*/*") }
+                            onUpload = {
+                                // v0.7.1: ask for the notification
+                                // permission first (once ever); the picker
+                                // opens either way — a denial never blocks
+                                // the upload.
+                                withNotificationPermission {
+                                    uploadPickerLauncher.launch("*/*")
+                                }
+                            }
                         )
                     }
                     is Screen.Browser -> {
@@ -323,9 +379,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun addAccountFromToken(token: String) {
+    /** Returns true when the quota read succeeded and the account was
+     *  stored. On failure returns false; the global "Check the Drive
+     *  API is enabled" error is only set when [setErrorOnFailure] is
+     *  true — the first-time Add Drive sign-in flow, where a quota
+     *  failure really is a setup problem. Refresh passes false: a
+     *  one-off failure there keeps the last-known numbers instead of
+     *  scaring the user (v0.7.1). */
+    private suspend fun addAccountFromToken(
+        token: String,
+        setErrorOnFailure: Boolean = true
+    ): Boolean {
         val quota = DriveApi.fetchQuota(token)
-        if (quota == null) { error = "Could not read Drive quota. Check the Drive API is enabled."; return }
+        if (quota == null) {
+            if (setErrorOnFailure) {
+                error = "Could not read Drive quota. Check the Drive API is enabled."
+            }
+            return false
+        }
         val stats = DriveApi.fetchFileStats(token, todayOnly = false)
         val today = DriveApi.fetchFileStats(token, todayOnly = true)
         val account = DriveAccount(
@@ -341,16 +412,22 @@ class MainActivity : ComponentActivity() {
         accounts = Store.loadAccounts(this)
         error = null
         hint = null
+        return true
     }
 
     /** Refresh re-reads quota for EVERY linked account, by email —
      *  not just the last one signed in. An account whose grant expired
-     *  is marked "Needs sign-in" instead of failing the whole refresh. */
+     *  is marked "Needs sign-in" instead of failing the whole refresh.
+     *  v0.7.1: a per-account quota failure no longer sets the global
+     *  scary error and no longer fails the refresh — that account
+     *  keeps its last-known numbers and is named in the hint. The
+     *  global error appears only if EVERY account fails to refresh. */
     private fun refreshAll() {
         if (refreshing) return
         refreshing = true
         lifecycleScope.launch {
             try {
+                error = null
                 val stored = Store.loadAccounts(this@MainActivity)
                 if (stored.isEmpty()) {
                     hint = "No Google account linked yet — tap Add Drive."
@@ -358,12 +435,16 @@ class MainActivity : ComponentActivity() {
                 }
                 var ok = 0
                 val needsSignIn = mutableListOf<String>()
+                val quotaFailed = mutableListOf<String>()
                 for (acct in stored) {
                     try {
                         val token = Auth.accessTokenForEmail(this@MainActivity, acct.email)
                         if (token == null) { needsSignIn.add(acct.email); continue }
-                        addAccountFromToken(token)
-                        ok++
+                        if (addAccountFromToken(token, setErrorOnFailure = false)) {
+                            ok++
+                        } else {
+                            quotaFailed.add(acct.email)
+                        }
                     } catch (e: UserRecoverableAuthException) {
                         needsSignIn.add(acct.email)
                         Store.upsertAccount(
@@ -374,12 +455,25 @@ class MainActivity : ComponentActivity() {
                         needsSignIn.add(acct.email)
                     }
                 }
-                hint = when {
-                    needsSignIn.isEmpty() -> "Refreshed $ok account${if (ok == 1) "" else "s"}."
-                    ok == 0 -> "Could not refresh — tap Add Drive and pick ${needsSignIn.first()} again."
-                    else -> "Refreshed $ok account${if (ok == 1) "" else "s"}. " +
-                        "${needsSignIn.joinToString()} needs sign-in again — tap Add Drive and pick it."
+                if (ok == 0 && needsSignIn.isEmpty() && quotaFailed.isNotEmpty()) {
+                    error = "Could not read Drive quotas — check the connection and tap Refresh to retry."
+                    return@launch
                 }
+                val parts = mutableListOf<String>()
+                if (ok > 0) parts.add("Refreshed $ok account${if (ok == 1) "" else "s"}.")
+                if (quotaFailed.isNotEmpty()) {
+                    parts.add(
+                        "${quotaFailed.joinToString()} couldn't refresh just now — " +
+                            "kept last numbers, tap Refresh to retry."
+                    )
+                }
+                if (needsSignIn.isNotEmpty()) {
+                    parts.add(
+                        if (ok == 0) "Could not refresh — tap Add Drive and pick ${needsSignIn.first()} again."
+                        else "${needsSignIn.joinToString()} needs sign-in again — tap Add Drive and pick it."
+                    )
+                }
+                hint = parts.joinToString(" ")
             } catch (e: Exception) {
                 error = "Refresh failed: ${e.message}"
             } finally {

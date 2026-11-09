@@ -81,8 +81,8 @@ private fun FileDetailsDialog(file: DriveApi.DriveFile, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         containerColor = CardBg,
-        titleContent = { Text(file.name, color = Color.White, fontWeight = FontWeight.Bold) },
-        textContent = {
+        title = { Text(file.name, color = Color.White, fontWeight = FontWeight.Bold) },
+        text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (!file.isFolder) {
                     Text("Size: ${formatGb(file.size)}", color = Color(0xFF9A9AA5), fontSize = 14.sp)

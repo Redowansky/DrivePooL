@@ -72,12 +72,27 @@ fun formatPercent(percent: Float): String = when {
 fun formatGb(bytes: Long): String {
     val b = bytes.toDouble()
     return when {
-        b >= 1_000_000_000_000_000.0 -> "%.2f PB".format(b / 1_000_000_000_000_000.0)
+        b >= 1_000_000_000_000_000.0 -> "%.2f PB".format(b / 1_000_000_000_000.0)
         b >= 1_000_000_000_000.0 -> "%.2f TB".format(b / 1_000_000_000_000.0)
         else -> {
             val gb = b / 1_000_000_000.0
             if (gb >= 100) "%.0f GB".format(gb) else "%.1f GB".format(gb)
         }
+    }
+}
+
+/** Exact file size in the right unit — a 240 KB PDF shows "240 KB",
+ *  not "0.0 GB" (formatGb always divides by a billion). Same decimal
+ *  units as the dashboard totals, so the numbers agree. */
+fun formatSize(bytes: Long): String {
+    val b = bytes.toDouble()
+    return when {
+        b < 1_000.0 -> "$bytes B"
+        b < 1_000_000.0 -> "%.0f KB".format(b / 1_000.0)
+        b < 1_000_000_000.0 -> "%.1f MB".format(b / 1_000_000.0)
+        b < 1_000_000_000_000.0 -> "%.2f GB".format(b / 1_000_000_000.0)
+        b < 1_000_000_000_000_000.0 -> "%.2f TB".format(b / 1_000_000_000_000.0)
+        else -> "%.2f PB".format(b / 1_000_000_000_000_000.0)
     }
 }
 

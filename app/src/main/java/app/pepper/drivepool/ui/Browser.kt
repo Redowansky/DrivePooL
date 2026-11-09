@@ -57,7 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.DriveApi
-import app.pepper.drivepool.data.formatGb
+import app.pepper.drivepool.data.formatSize
 import app.pepper.drivepool.ui.theme.CardBg
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -80,7 +80,8 @@ private fun prettyDate(rfc3339: String): String = try {
 private fun FileDetailsDialog(
     file: DriveApi.DriveFile,
     onClose: () -> Unit,
-    onMove: (() -> Unit)? = null
+    onMove: (() -> Unit)? = null,
+    onOpen: (() -> Unit)? = null
 ) {
     AlertDialog(
         onDismissRequest = onClose,
@@ -89,14 +90,21 @@ private fun FileDetailsDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (!file.isFolder) {
-                    Text("Size: ${formatGb(file.size)}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+                    Text("Size: ${formatSize(file.size)}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
                 }
                 Text("Modified: ${prettyDate(file.modifiedTime)}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
                 Text("Type: ${file.mimeType}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
-                if (!file.isFolder) {
+                if (!file.isFolder && onMove != null) {
                     Text(
                         "Moving downloads the file to your phone and uploads it " +
                             "to the other Drive — it costs data twice.",
+                        color = Color(0xFF9A9AA5), fontSize = 13.sp
+                    )
+                }
+                if (!file.isFolder && onOpen != null) {
+                    Text(
+                        "Open downloads the file to your phone and lets Android " +
+                            "ask which app should play it.",
                         color = Color(0xFF9A9AA5), fontSize = 13.sp
                     )
                 }
@@ -104,6 +112,9 @@ private fun FileDetailsDialog(
         },
         confirmButton = {
             Row {
+                if (onOpen != null && !file.isFolder) {
+                    TextButton(onClick = onOpen) { Text("Open", color = Color(0xFF4A90E2)) }
+                }
                 if (onMove != null && !file.isFolder) {
                     TextButton(onClick = onMove) { Text("Move", color = Color(0xFF4A90E2)) }
                 }
@@ -144,7 +155,7 @@ private fun FileRow(
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Text(
-                if (file.isFolder) "Folder" else "${formatGb(file.size)} • ${prettyDate(file.modifiedTime)}",
+                if (file.isFolder) "Folder" else "${formatSize(file.size)} • ${prettyDate(file.modifiedTime)}",
                 color = Color(0xFF9A9AA5), fontSize = 13.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
@@ -165,6 +176,7 @@ fun FileBrowserScreen(
     pickMode: Boolean = false,
     onPickFolder: (FolderCrumb) -> Unit = {},
     onMoveFile: ((DriveApi.DriveFile) -> Unit)? = null,
+    onOpenFile: ((DriveApi.DriveFile) -> Unit)? = null,
     // True when the last listing failed because the account must approve
     // the broader Drive permission (v0.5.0 scope change).
     showReauth: Boolean = false,
@@ -309,7 +321,8 @@ fun FileBrowserScreen(
         FileDetailsDialog(
             file = it,
             onClose = { selected = null },
-            onMove = onMoveFile?.let { move -> { move(it); selected = null } }
+            onMove = onMoveFile?.let { move -> { move(it); selected = null } },
+            onOpen = onOpenFile?.let { open -> { open(it); selected = null } }
         )
     }
 }
@@ -319,14 +332,16 @@ fun SearchScreen(
     accounts: List<DriveAccount>,
     onBack: () -> Unit,
     onOpenFolder: (email: String, folder: FolderCrumb) -> Unit,
-    searchAll: suspend (String) -> List<SearchHit>
+    searchAll: suspend (String) -> List<SearchHit>,
+    onOpenFile: ((email: String, file: DriveApi.DriveFile) -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var hits by remember { mutableStateOf<List<SearchHit>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var searched by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf<DriveApi.DriveFile?>(null) }
+    // (account email, file) — the email is needed to download the file.
+    var selected by remember { mutableStateOf<Pair<String, DriveApi.DriveFile>?>(null) }
 
     fun runSearch() {
         val q = query.trim()
@@ -413,7 +428,7 @@ fun SearchScreen(
                                 if (hit.file.isFolder) {
                                     onOpenFolder(hit.email, FolderCrumb(hit.file.id, hit.file.name))
                                 } else {
-                                    selected = hit.file
+                                    selected = hit.email to hit.file
                                 }
                             }
                         }
@@ -424,5 +439,11 @@ fun SearchScreen(
         }
     }
 
-    selected?.let { FileDetailsDialog(file = it, onClose = { selected = null }) }
+    selected?.let { (email, file) ->
+        FileDetailsDialog(
+            file = file,
+            onClose = { selected = null },
+            onOpen = onOpenFile?.let { open -> { open(email, file); selected = null } }
+        )
+    }
 }

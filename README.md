@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.5.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.5.1)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -37,6 +37,8 @@
 | 🔍 **Search all Drives** | Top-bar search looks through every linked Drive by name, results grouped by account |
 | ↔️ **Move files** | File details → Move → pick a Drive, pick a folder — the file downloads and re-uploads through your phone, then the original is deleted |
 | ⬆️ **Pooled uploads** | Top-bar upload sends a file from your phone to the linked Drive with the most free space |
+| ▶️ **Open in your apps** | File details → Open downloads the file and lets Android ask which player or app to use — DrivePool never plays media itself |
+| 📏 **Exact file sizes** | Files show their real size (240 KB, 12.3 MB, 1.2 GB) instead of 0.0 GB |
 
 ## 📱 Screenshots
 
@@ -76,6 +78,7 @@
 - [x] **v0.3.1** — Gauge refinement (his v2 mockup): ring shows only the used sliver, full "14.1 GB / 11.00 TB (0.13% used • 10.98 TB free)" line; app icon rebuilt from his cloud artwork, cloud centred in the safe zone so launchers can't crop it into a blue blob
 - [x] **v0.4.0** — Browse files per account (tap a card, folders + back nav + load more), search across accounts
 - [x] **v0.5.0** — Move files between Drives (pick a Drive, pick a folder), pooled uploads to the freest Drive; full Drive scope — every account re-approves once
+- [x] **v0.5.1** — Exact file sizes (KB/MB/GB instead of 0.0 GB), Open files in external apps via Android's chooser
 
 ## 🤝 Contributing
 

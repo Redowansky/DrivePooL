@@ -5,6 +5,7 @@
 package app.pepper.drivepool
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import java.io.File
 import app.pepper.drivepool.data.ACCOUNT_COLORS
@@ -72,9 +74,10 @@ class MainActivity : ComponentActivity() {
     private var moveSourceEmail by mutableStateOf<String?>(null)
     private var moveSourceFile by mutableStateOf<DriveApi.DriveFile?>(null)
     private var moveDestEmail by mutableStateOf<String?>(null)
-    // (status text, 0..1) while a move or pooled upload runs; null = idle.
+    // (status text, 0..1) while a move, pooled upload or file open runs.
     private var moveProgress by mutableStateOf<Pair<String, Float>?>(null)
     private var uploadProgress by mutableStateOf<Pair<String, Float>?>(null)
+    private var openProgress by mutableStateOf<Pair<String, Float>?>(null)
     private var moveError by mutableStateOf<String?>(null)
     // Account that must approve the broader Drive scope (v0.5.0).
     private var reauthEmail by mutableStateOf<String?>(null)
@@ -176,6 +179,7 @@ class MainActivity : ComponentActivity() {
                                 moveSourceFile = file
                                 moveDestEmail = null
                             },
+                            onOpenFile = { file -> openFile(s.email, file) },
                             showReauth = reauthEmail == s.email,
                             onReauth = {
                                 reauthEmail = null
@@ -225,7 +229,8 @@ class MainActivity : ComponentActivity() {
                                 )
                                 screen = Screen.Browser(email)
                             },
-                            searchAll = { query -> searchAll(query) }
+                            searchAll = { query -> searchAll(query) },
+                            onOpenFile = { email, file -> openFile(email, file) }
                         )
                     }
                 }
@@ -270,15 +275,19 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // Progress while a move or pooled upload runs.
-                val progress = moveProgress ?: uploadProgress
+                // Progress while a move, pooled upload or file open runs.
+                val progress = moveProgress ?: uploadProgress ?: openProgress
                 if (progress != null) {
                     AlertDialog(
                         onDismissRequest = {},
                         containerColor = Color(0xFF1C1C22),
                         title = {
                             Text(
-                                if (moveProgress != null) "Moving file" else "Uploading",
+                                when {
+                                    moveProgress != null -> "Moving file"
+                                    uploadProgress != null -> "Uploading"
+                                    else -> "Opening file"
+                                },
                                 color = Color.White, fontWeight = FontWeight.Bold
                             )
                         },
@@ -454,6 +463,56 @@ class MainActivity : ComponentActivity() {
                 moveSourceFile = null
                 moveSourceEmail = null
                 moveDestEmail = null
+            }
+        }
+    }
+
+    /** Open a Drive file in an external app: download it to the app
+     *  cache, then fire an ACTION_VIEW chooser with the file's MIME
+     *  type — Android asks which player/app to use. DrivePool never
+     *  plays media itself. */
+    private fun openFile(email: String, file: DriveApi.DriveFile) {
+        lifecycleScope.launch {
+            openProgress = "Downloading ${file.name}…" to 0f
+            val safeName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val tmp = File(File(cacheDir, "open"), "${file.id}_$safeName").apply {
+                parentFile?.mkdirs()
+            }
+            try {
+                val token = try {
+                    Auth.accessTokenForEmail(this@MainActivity, email)
+                } catch (_: Exception) { null }
+                if (token == null) {
+                    error = "Could not get access for $email. Sign in again and retry."
+                    return@launch
+                }
+                val ok = DriveApi.downloadFile(token, file.id, tmp) { done, total ->
+                    if (total > 0) {
+                        openProgress = "Downloading ${file.name}…" to
+                            (done.toFloat() / total)
+                    }
+                }
+                if (!ok) {
+                    error = "Download failed. Check the connection and retry."
+                    return@launch
+                }
+                openProgress = null
+                val uri = FileProvider.getUriForFile(
+                    this@MainActivity,
+                    "${packageName}.fileprovider",
+                    tmp
+                )
+                val view = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, file.mimeType)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    startActivity(Intent.createChooser(view, "Open with"))
+                } catch (_: ActivityNotFoundException) {
+                    error = "No app on your phone can open this file type."
+                }
+            } finally {
+                openProgress = null
             }
         }
     }

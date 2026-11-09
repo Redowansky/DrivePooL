@@ -77,7 +77,11 @@ private fun prettyDate(rfc3339: String): String = try {
 } catch (_: Exception) { rfc3339 }
 
 @Composable
-private fun FileDetailsDialog(file: DriveApi.DriveFile, onClose: () -> Unit) {
+private fun FileDetailsDialog(
+    file: DriveApi.DriveFile,
+    onClose: () -> Unit,
+    onMove: (() -> Unit)? = null
+) {
     AlertDialog(
         onDismissRequest = onClose,
         containerColor = CardBg,
@@ -89,10 +93,22 @@ private fun FileDetailsDialog(file: DriveApi.DriveFile, onClose: () -> Unit) {
                 }
                 Text("Modified: ${prettyDate(file.modifiedTime)}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
                 Text("Type: ${file.mimeType}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+                if (!file.isFolder) {
+                    Text(
+                        "Moving downloads the file to your phone and uploads it " +
+                            "to the other Drive — it costs data twice.",
+                        color = Color(0xFF9A9AA5), fontSize = 13.sp
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onClose) { Text("Close", color = Color(0xFF4A90E2)) }
+            Row {
+                if (onMove != null && !file.isFolder) {
+                    TextButton(onClick = onMove) { Text("Move", color = Color(0xFF4A90E2)) }
+                }
+                TextButton(onClick = onClose) { Text("Close", color = Color(0xFF4A90E2)) }
+            }
         }
     )
 }
@@ -143,7 +159,16 @@ fun FileBrowserScreen(
     stack: List<FolderCrumb>,
     onNavigate: (List<FolderCrumb>) -> Unit,
     onClose: () -> Unit,
-    loadFiles: suspend (email: String, folderId: String?, pageToken: String?) -> DriveApi.FilePage?
+    loadFiles: suspend (email: String, folderId: String?, pageToken: String?) -> DriveApi.FilePage?,
+    // Pick mode (v0.5.0 move flow): the screen becomes a folder chooser —
+    // "Move here" picks the current folder, files are not selectable.
+    pickMode: Boolean = false,
+    onPickFolder: (FolderCrumb) -> Unit = {},
+    onMoveFile: ((DriveApi.DriveFile) -> Unit)? = null,
+    // True when the last listing failed because the account must approve
+    // the broader Drive permission (v0.5.0 scope change).
+    showReauth: Boolean = false,
+    onReauth: (() -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     val current = stack.last()
@@ -209,30 +234,44 @@ fun FileBrowserScreen(
 
         when {
             loading -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFF4A90E2))
                 }
             }
             error != null -> {
-                Text(error!!, color = Color(0xFFEF5350), fontSize = 14.sp)
+                Text(
+                    if (showReauth) {
+                        "This account needs to approve the new Drive permission " +
+                            "(v0.5.0 moved from read-only to full Drive access, " +
+                            "so files can be moved and uploaded)."
+                    } else error!!,
+                    color = Color(0xFFEF5350), fontSize = 14.sp
+                )
                 Spacer(Modifier.height(12.dp))
+                if (showReauth && onReauth != null) {
+                    Button(
+                        onClick = onReauth,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))
+                    ) { Text("Sign in again", fontWeight = FontWeight.Bold) }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Button(
                     onClick = { load(null, append = false) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))
-                ) { Text("Retry", fontWeight = FontWeight.Bold) }
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32))
+                ) { Text("Retry", color = Color.White) }
             }
             files.isEmpty() -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text("This folder is empty.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
                 }
             }
             else -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(modifier = Modifier.weight(1f)) {
                     items(files, key = { it.id }) { file ->
                         FileRow(file, accountColor) {
                             if (file.isFolder) {
                                 onNavigate(stack + FolderCrumb(file.id, file.name))
-                            } else {
+                            } else if (!pickMode) {
                                 selected = file
                             }
                         }
@@ -254,9 +293,25 @@ fun FileBrowserScreen(
                 }
             }
         }
+        if (pickMode) {
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onPickFolder(current) },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Move here — ${current.name}", fontWeight = FontWeight.Bold)
+            }
+        }
     }
 
-    selected?.let { FileDetailsDialog(it) { selected = null } }
+    selected?.let {
+        FileDetailsDialog(
+            file = it,
+            onClose = { selected = null },
+            onMove = onMoveFile?.let { move -> { move(it); selected = null } }
+        )
+    }
 }
 
 @Composable

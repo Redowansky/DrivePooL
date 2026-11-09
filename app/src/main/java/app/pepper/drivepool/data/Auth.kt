@@ -18,18 +18,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Google sign-in for Drive, read-only scope — same flow as the Library app.
+ * Google sign-in for Drive — same flow as the Library app.
+ *
+ * v0.5.0 moved from drive.readonly to the full drive scope, because
+ * moving files between Drives and uploading need write access (copy
+ * out of one account, upload into another, delete the original).
+ * Every account linked before v0.5.0 must approve the new scope once:
+ * the next refresh/browse marks it "Needs sign-in" and Add Drive
+ * re-picks it with the broader consent.
  *
  * The Web client ID is baked into the app (DrivePool Cloud project). The
  * user just taps Add Drive, picks a Google account, and grants Drive
- * read-only access. No pasting, no Console steps for the user.
+ * access. No pasting, no Console steps for the user.
  * The matching Android OAuth client for package app.pepper.drivepool
  * (signed with the stable release key) exists in the same Cloud project,
  * otherwise sign-in fails with code 10.
  */
 object Auth {
     const val RC_SIGN_IN = 9001
-    const val DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+    const val DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
     /** Web OAuth client ID of the DrivePool Cloud project (public identifier, not a secret). */
     const val WEB_CLIENT_ID = "229634430100-ep0ig8nuc5kp3ciaj3clfs7k6i6hgbat.apps.googleusercontent.com"

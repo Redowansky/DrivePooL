@@ -6,9 +6,16 @@ package app.pepper.drivepool.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okio.Buffer
+import okio.BufferedSink
+import okio.source
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,6 +62,109 @@ object DriveApi {
             val arr = json.optJSONArray("files") ?: return@withContext null
             val files = (0 until arr.length()).map { parseFile(arr.getJSONObject(it)) }
             FilePage(files, json.optString("nextPageToken", "").takeIf { it.isNotEmpty() })
+        }
+
+    /** Streams a file's bytes into [dest] (used for moves: out of one
+     *  Drive, into another, through the phone). Returns false on failure. */
+    suspend fun downloadFile(
+        token: String,
+        fileId: String,
+        dest: File,
+        onProgress: (downloaded: Long, total: Long) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder()
+                .url("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
+                .addHeader("Authorization", "Bearer $token").build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext false
+                val body = resp.body ?: return@withContext false
+                val total = body.contentLength()
+                dest.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var done = 0L
+                    body.byteStream().use { input ->
+                        var read: Int
+                        while (input.read(buf).also { read = it } != -1) {
+                            out.write(buf, 0, read)
+                            done += read
+                            onProgress(done, total)
+                        }
+                    }
+                }
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /** Uploads [file] into a Drive folder (null parent = My Drive root).
+     *  Streams from disk with progress. Returns the new file id, or null. */
+    suspend fun uploadFile(
+        token: String,
+        name: String,
+        mimeType: String,
+        parentId: String?,
+        file: File,
+        onProgress: (uploaded: Long, total: Long) -> Unit
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val meta = JSONObject().apply {
+                put("name", name)
+                put("mimeType", mimeType)
+                if (parentId != null) put("parents", org.json.JSONArray().put(parentId))
+            }
+            val mediaBody = object : RequestBody() {
+                override fun contentType() = mimeType.toMediaTypeOrNull()
+                override fun contentLength() = file.length()
+                override fun writeTo(sink: BufferedSink) {
+                    val source = file.source()
+                    val buf = Buffer()
+                    var total = 0L
+                    var read: Long
+                    while (source.read(buf, 8192).also { read = it } != -1L) {
+                        sink.write(buf, read)
+                        total += read
+                        onProgress(total, file.length())
+                    }
+                    source.close()
+                }
+            }
+            val multipart = MultipartBody.Builder()
+                .setType("multipart/related".toMediaTypeOrNull()!!)
+                .addPart(
+                    okhttp3.Headers.headersOf("Content-Type", "application/json; charset=UTF-8"),
+                    RequestBody.create(
+                        "application/json; charset=UTF-8".toMediaTypeOrNull(),
+                        meta.toString()
+                    )
+                )
+                .addPart(
+                    okhttp3.Headers.headersOf("Content-Type", mimeType),
+                    mediaBody
+                )
+                .build()
+            val req = Request.Builder()
+                .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
+                .addHeader("Authorization", "Bearer $token")
+                .post(multipart).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string() ?: return@withContext null
+                JSONObject(body).optString("id").takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) { null }
+    }
+
+    /** Deletes a file (the last step of a move, after the copy landed). */
+    suspend fun deleteFile(token: String, fileId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val req = Request.Builder()
+                    .url("https://www.googleapis.com/drive/v3/files/$fileId")
+                    .addHeader("Authorization", "Bearer $token")
+                    .delete().build()
+                client.newCall(req).execute().use { it.isSuccessful }
+            } catch (_: Exception) { false }
         }
 
     /** Name search inside one account (first 100 hits, folders + files). */

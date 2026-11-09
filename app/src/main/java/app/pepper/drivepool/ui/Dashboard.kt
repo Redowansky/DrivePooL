@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -79,7 +80,8 @@ fun DashboardScreen(
     onRefresh: () -> Unit,
     onRemoveAccount: (String) -> Unit,
     onOpenAccount: (DriveAccount) -> Unit = {},
-    onSearch: () -> Unit = {}
+    onSearch: () -> Unit = {},
+    onUpload: () -> Unit = {}
 ) {
     val totalUsed = accounts.sumOf { it.usedBytes }
     val totalLimit = accounts.sumOf { it.limitBytes }
@@ -109,6 +111,9 @@ fun DashboardScreen(
             Text("DrivePool", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             IconButton(onClick = onSearch) {
                 Icon(Icons.Filled.Search, contentDescription = "Search all Drives", tint = Color.White)
+            }
+            IconButton(onClick = onUpload) {
+                Icon(Icons.Filled.Upload, contentDescription = "Upload to the freest Drive", tint = Color.White)
             }
             IconButton(onClick = onRefresh) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White)
@@ -177,7 +182,7 @@ fun DashboardScreen(
             Spacer(Modifier.height(16.dp))
             Text("Add your first Drive", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("Tap Add Drive at the top, pick a Google account, and grant Drive read-only access. That's it — quotas are read from Google Drive and pooled here.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+            Text("Tap Add Drive at the top, pick a Google account, and grant Drive access. That's it — quotas are read from Google Drive and pooled here.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
         } else {
             // Total pooled card — ring gauge, like his design mockup.
             Column(

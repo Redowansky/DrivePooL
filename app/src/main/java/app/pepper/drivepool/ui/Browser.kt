@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,12 +33,14 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -264,6 +267,9 @@ fun FileBrowserScreen(
     onOpenFile: ((DriveApi.DriveFile) -> Unit)? = null,
     onRenameFile: (suspend (DriveApi.DriveFile, String) -> Boolean)? = null,
     onDeleteFile: (suspend (DriveApi.DriveFile) -> Boolean)? = null,
+    // v0.8.1: floating upload button — uploads into the folder on
+    // screen. Null in pick mode (the screen is a folder chooser there).
+    onUploadHere: (() -> Unit)? = null,
     // True when the last listing failed because the account must approve
     // the broader Drive permission (v0.5.0 scope change).
     showReauth: Boolean = false,
@@ -302,10 +308,14 @@ fun FileBrowserScreen(
 
     LaunchedEffect(stack, sort) { load(null, append = false) }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF0B0B0F))
+    ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -396,7 +406,11 @@ fun FileBrowserScreen(
                 }
             }
             else -> {
-                LazyColumn(modifier = Modifier.weight(1f)) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    // Room for the floating upload button (v0.8.1).
+                    contentPadding = PaddingValues(bottom = 88.dp)
+                ) {
                     items(files, key = { it.id }) { file ->
                         FileRow(file, accountColor) {
                             if (file.isFolder) {
@@ -453,6 +467,21 @@ fun FileBrowserScreen(
                 Text("Move here — ${current.name}", fontWeight = FontWeight.Bold)
             }
         }
+    }
+
+    // v0.8.1: floating upload button — it follows you into every
+    // folder you open; the picked file lands in the folder on screen,
+    // on the account you are browsing. Hidden in pick mode.
+    if (!pickMode && onUploadHere != null) {
+        FloatingActionButton(
+            onClick = onUploadHere,
+            containerColor = Color(0xFF4A90E2),
+            contentColor = Color.White,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+        ) {
+            Icon(Icons.Filled.Upload, contentDescription = "Upload to this folder")
+        }
+    }
     }
 
     selected?.let {

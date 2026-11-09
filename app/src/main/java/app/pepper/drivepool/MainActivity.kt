@@ -98,6 +98,19 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let { startPooledUpload(it) } }
 
+    // v0.8.1: the browser's floating upload button — the target is
+    // the account + folder on screen when the picker was opened.
+    private var pendingFolderUpload by mutableStateOf<Pair<String, FolderCrumb>?>(null)
+    private val folderUploadPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        val target = pendingFolderUpload
+        pendingFolderUpload = null
+        if (uri != null && target != null) {
+            startFolderUpload(uri, target.first, target.second)
+        }
+    }
+
     // v0.7.1: Android 13+ needs POST_NOTIFICATIONS at runtime, or the
     // upload notification never appears (App Info shows the toggle
     // greyed off). The callback always proceeds to the pending action
@@ -242,6 +255,12 @@ class MainActivity : ComponentActivity() {
                             onOpenFile = { file -> openFile(s.email, file) },
                             onRenameFile = { file, newName -> renameDriveFile(s.email, file, newName) },
                             onDeleteFile = { file -> trashDriveFile(s.email, file) },
+                            onUploadHere = {
+                                pendingFolderUpload = s.email to browserStack.last()
+                                withNotificationPermission {
+                                    folderUploadPickerLauncher.launch("*/*")
+                                }
+                            },
                             showReauth = reauthEmail == s.email,
                             onReauth = {
                                 reauthEmail = null
@@ -670,6 +689,24 @@ class MainActivity : ComponentActivity() {
         }
         val target = stored.maxByOrNull { it.freeBytes } ?: return
         UploadService.startUpload(this, uri, name, mime, target.email)
+    }
+
+    /** Upload into a specific folder on a specific account (v0.8.1 —
+     *  the browser's floating upload button). Unlike the pooled
+     *  upload, this does NOT pick the freest Drive — it goes exactly
+     *  where the user was looking. */
+    private fun startFolderUpload(uri: Uri, email: String, folder: FolderCrumb) {
+        var name = "upload"
+        val mime = contentResolver.getType(uri) ?: "application/octet-stream"
+        contentResolver.query(
+            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) name = c.getString(idx) ?: name
+            }
+        }
+        UploadService.startUpload(this, uri, name, mime, email, folder.id, folder.name)
     }
 
     /** Name search across EVERY linked account, grouped by account in the UI. */

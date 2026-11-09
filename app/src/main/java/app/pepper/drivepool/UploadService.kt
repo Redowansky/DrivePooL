@@ -56,7 +56,18 @@ class UploadService : Service() {
         private const val CHANNEL_ID = "uploads"
         private const val NOTIF_ID = 1001
 
-        fun startUpload(ctx: Context, uri: Uri, name: String, mime: String, destEmail: String) {
+        /** [folderId] null = the Drive's root. v0.8.1: the browser's
+         *  floating upload button passes the folder you are looking
+         *  at, so the file lands there instead of the root. */
+        fun startUpload(
+            ctx: Context,
+            uri: Uri,
+            name: String,
+            mime: String,
+            destEmail: String,
+            folderId: String? = null,
+            folderName: String = "My Drive"
+        ) {
             val intent = Intent(ctx, UploadService::class.java).apply {
                 action = ACTION_UPLOAD
                 putExtra("jobId", UUID.randomUUID().toString())
@@ -64,6 +75,8 @@ class UploadService : Service() {
                 putExtra("name", name)
                 putExtra("mime", mime)
                 putExtra("destEmail", destEmail)
+                putExtra("folderId", folderId)
+                putExtra("folderName", folderName)
             }
             ctx.startForegroundService(intent)
         }
@@ -159,6 +172,8 @@ class UploadService : Service() {
         val name = intent.getStringExtra("name") ?: "upload"
         val mime = intent.getStringExtra("mime") ?: "application/octet-stream"
         val destEmail = intent.getStringExtra("destEmail") ?: return fail("No destination Drive.")
+        val folderId = intent.getStringExtra("folderId")
+        val folderName = intent.getStringExtra("folderName") ?: "My Drive"
         val tmp = File(cacheDir, "transfer-$jobId")
         update("Uploading", "Preparing $name…", 0f)
         try {
@@ -175,7 +190,7 @@ class UploadService : Service() {
                 jobId = jobId,
                 name = name,
                 mimeType = mime,
-                parentId = null,
+                parentId = folderId,
                 file = tmp,
                 tokenFor = tokenFor,
                 onProgress = { done, total ->
@@ -189,7 +204,8 @@ class UploadService : Service() {
             )
             if (id == null) return fail("Upload failed. Check the connection and retry.")
             tmp.delete()
-            done("Uploading", "Uploaded $name to $destEmail.")
+            val where = if (folderId != null) " to $destEmail ($folderName)" else " to $destEmail"
+            done("Uploading", "Uploaded $name$where.")
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) {
                 tmp.delete()

@@ -146,7 +146,7 @@ class UploadService : Service() {
         super.onDestroy()
     }
 
-    private fun runUpload(intent: Intent, jobId: String) {
+    private suspend fun runUpload(intent: Intent, jobId: String) {
         val uri: Uri = intent.getParcelableExtra("uri") ?: return fail("Nothing to upload.")
         val name = intent.getStringExtra("name") ?: "upload"
         val mime = intent.getStringExtra("mime") ?: "application/octet-stream"
@@ -193,7 +193,7 @@ class UploadService : Service() {
         }
     }
 
-    private fun runMove(intent: Intent, jobId: String) {
+    private suspend fun runMove(intent: Intent, jobId: String) {
         val srcEmail = intent.getStringExtra("srcEmail") ?: return fail("No source Drive.")
         val fileId = intent.getStringExtra("fileId") ?: return fail("No file to move.")
         val fileName = intent.getStringExtra("fileName") ?: "file"

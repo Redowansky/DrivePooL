@@ -6,6 +6,7 @@ package app.pepper.drivepool.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -29,10 +31,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -81,8 +86,14 @@ private fun FileDetailsDialog(
     file: DriveApi.DriveFile,
     onClose: () -> Unit,
     onMove: (() -> Unit)? = null,
-    onOpen: (() -> Unit)? = null
+    onOpen: (() -> Unit)? = null,
+    onRename: ((String) -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
 ) {
+    var showRename by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
+    var newName by remember { mutableStateOf(file.name) }
+
     AlertDialog(
         onDismissRequest = onClose,
         containerColor = CardBg,
@@ -96,8 +107,11 @@ private fun FileDetailsDialog(
                 Text("Type: ${file.mimeType}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
                 if (!file.isFolder && onMove != null) {
                     Text(
-                        "Moving downloads the file to your phone and uploads it " +
-                            "to the other Drive — it costs data twice.",
+                        "Moving copies the file on Google's servers when " +
+                            "possible — no data through your phone. If that " +
+                            "isn't possible it downloads and re-uploads instead, " +
+                            "and the original is only deleted after the copy " +
+                            "is verified.",
                         color = Color(0xFF9A9AA5), fontSize = 13.sp
                     )
                 }
@@ -105,6 +119,13 @@ private fun FileDetailsDialog(
                     Text(
                         "Open downloads the file to your phone and lets Android " +
                             "ask which app should play it.",
+                        color = Color(0xFF9A9AA5), fontSize = 13.sp
+                    )
+                }
+                if (onDelete != null) {
+                    Text(
+                        "Delete moves it to Trash — you can restore it from " +
+                            "Trash later. It is not deleted forever.",
                         color = Color(0xFF9A9AA5), fontSize = 13.sp
                     )
                 }
@@ -118,14 +139,78 @@ private fun FileDetailsDialog(
                 if (onMove != null && !file.isFolder) {
                     TextButton(onClick = onMove) { Text("Move", color = Color(0xFF4A90E2)) }
                 }
+                if (onRename != null) {
+                    TextButton(onClick = { showRename = true }) { Text("Rename", color = Color(0xFF4A90E2)) }
+                }
+                if (onDelete != null) {
+                    TextButton(onClick = { showDelete = true }) { Text("Delete", color = Color(0xFFEF5350)) }
+                }
                 TextButton(onClick = onClose) { Text("Close", color = Color(0xFF4A90E2)) }
             }
         }
     )
+
+    if (showRename) {
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            containerColor = CardBg,
+            title = { Text("Rename", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF4A90E2),
+                        unfocusedBorderColor = Color(0xFF2E2E36)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val name = newName.trim()
+                        if (name.isNotEmpty() && name != file.name) onRename?.invoke(name)
+                        showRename = false
+                    }
+                ) { Text("Save", color = Color(0xFF4A90E2)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRename = false }) { Text("Cancel", color = Color(0xFF9A9AA5)) }
+            }
+        )
+    }
+
+    if (showDelete) {
+        AlertDialog(
+            onDismissRequest = { showDelete = false },
+            containerColor = CardBg,
+            title = { Text("Move to trash?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "\"${file.name}\" will go to Trash. You can restore it " +
+                        "from Trash — it is not deleted forever.",
+                    color = Color(0xFF9A9AA5), fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDelete = false; onDelete?.invoke() }) {
+                    Text("Move to trash", color = Color(0xFFEF5350))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDelete = false }) { Text("Cancel", color = Color(0xFF9A9AA5)) }
+            }
+        )
+    }
 }
 
+// Public so the Trash screen can reuse it (v0.8.0).
 @Composable
-private fun FileRow(
+fun FileRow(
     file: DriveApi.DriveFile,
     tint: Color,
     onClick: () -> Unit
@@ -170,13 +255,15 @@ fun FileBrowserScreen(
     stack: List<FolderCrumb>,
     onNavigate: (List<FolderCrumb>) -> Unit,
     onClose: () -> Unit,
-    loadFiles: suspend (email: String, folderId: String?, pageToken: String?) -> DriveApi.FilePage?,
+    loadFiles: suspend (email: String, folderId: String?, pageToken: String?, sort: DriveApi.FileSort) -> DriveApi.FilePage?,
     // Pick mode (v0.5.0 move flow): the screen becomes a folder chooser —
     // "Move here" picks the current folder, files are not selectable.
     pickMode: Boolean = false,
     onPickFolder: (FolderCrumb) -> Unit = {},
     onMoveFile: ((DriveApi.DriveFile) -> Unit)? = null,
     onOpenFile: ((DriveApi.DriveFile) -> Unit)? = null,
+    onRenameFile: (suspend (DriveApi.DriveFile, String) -> Boolean)? = null,
+    onDeleteFile: (suspend (DriveApi.DriveFile) -> Boolean)? = null,
     // True when the last listing failed because the account must approve
     // the broader Drive permission (v0.5.0 scope change).
     showReauth: Boolean = false,
@@ -188,16 +275,22 @@ fun FileBrowserScreen(
     var nextPage by remember(stack) { mutableStateOf<String?>(null) }
     var loading by remember(stack) { mutableStateOf(true) }
     var loadingMore by remember { mutableStateOf(false) }
+    var loadMoreFailed by remember { mutableStateOf(false) }
     var error by remember(stack) { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<DriveApi.DriveFile?>(null) }
+    // v0.8.0: sort order (Claude's browsing note).
+    var sort by remember { mutableStateOf(DriveApi.FileSort.NAME_ASC) }
+    var showSortMenu by remember { mutableStateOf(false) }
 
     fun load(pageToken: String?, append: Boolean) {
         scope.launch {
             if (append) loadingMore = true else loading = true
             error = null
-            val page = loadFiles(account.email, current.id, pageToken)
+            loadMoreFailed = false
+            val page = loadFiles(account.email, current.id, pageToken, sort)
             if (page == null) {
-                error = "Could not list files. Check the connection and try again."
+                if (append) loadMoreFailed = true
+                else error = "Could not list files. Check the connection and try again."
             } else {
                 files = if (append) files + page.files else page.files
                 nextPage = page.nextPageToken
@@ -207,7 +300,7 @@ fun FileBrowserScreen(
         }
     }
 
-    LaunchedEffect(stack) { load(null, append = false) }
+    LaunchedEffect(stack, sort) { load(null, append = false) }
 
     Column(
         modifier = Modifier
@@ -230,6 +323,31 @@ fun FileBrowserScreen(
                     account.email, color = Color(0xFF9A9AA5), fontSize = 13.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
+            }
+            // v0.8.0: sort menu (Claude's browsing note).
+            Box {
+                IconButton(onClick = { showSortMenu = true }) {
+                    Icon(Icons.Filled.Sort, contentDescription = "Sort", tint = Color.White)
+                }
+                DropdownMenu(
+                    expanded = showSortMenu,
+                    onDismissRequest = { showSortMenu = false }
+                ) {
+                    DriveApi.FileSort.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    (if (option == sort) "✓ " else "") + option.label,
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                sort = option
+                                showSortMenu = false
+                            }
+                        )
+                    }
+                }
             }
             IconButton(onClick = onClose) {
                 Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
@@ -290,14 +408,34 @@ fun FileBrowserScreen(
                     }
                     if (nextPage != null) {
                         item {
+                            // v0.8.0: infinite scroll (Claude's browsing
+                            // note) — the next page loads itself when
+                            // you reach the bottom. If it fails, a
+                            // manual retry button appears instead.
                             Spacer(Modifier.height(12.dp))
-                            Button(
-                                onClick = { load(nextPage, append = true) },
-                                enabled = !loadingMore,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(if (loadingMore) "Loading…" else "Load more", color = Color.White)
+                            if (loadMoreFailed) {
+                                Button(
+                                    onClick = { load(nextPage, append = true) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Couldn't load more — tap to retry", color = Color.White)
+                                }
+                            } else {
+                                if (!loadingMore) {
+                                    LaunchedEffect(files.size) {
+                                        load(nextPage, append = true)
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = Color(0xFF4A90E2),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             }
                             Spacer(Modifier.height(16.dp))
                         }
@@ -322,7 +460,23 @@ fun FileBrowserScreen(
             file = it,
             onClose = { selected = null },
             onMove = onMoveFile?.let { move -> { move(it); selected = null } },
-            onOpen = onOpenFile?.let { open -> { open(it); selected = null } }
+            onOpen = onOpenFile?.let { open -> { open(it); selected = null } },
+            onRename = onRenameFile?.let { rename ->
+                { newName ->
+                    scope.launch {
+                        if (rename(it, newName)) load(null, append = false)
+                        selected = null
+                    }
+                }
+            },
+            onDelete = onDeleteFile?.let { delete ->
+                {
+                    scope.launch {
+                        if (delete(it)) load(null, append = false)
+                        selected = null
+                    }
+                }
+            }
         )
     }
 }
@@ -332,8 +486,10 @@ fun SearchScreen(
     accounts: List<DriveAccount>,
     onBack: () -> Unit,
     onOpenFolder: (email: String, folder: FolderCrumb) -> Unit,
-    searchAll: suspend (String) -> List<SearchHit>,
-    onOpenFile: ((email: String, file: DriveApi.DriveFile) -> Unit)? = null
+    searchAll: suspend (String, DriveApi.SearchType, DriveApi.SearchDate) -> List<SearchHit>,
+    onOpenFile: ((email: String, file: DriveApi.DriveFile) -> Unit)? = null,
+    onRenameFile: (suspend (email: String, file: DriveApi.DriveFile, newName: String) -> Boolean)? = null,
+    onDeleteFile: (suspend (email: String, file: DriveApi.DriveFile) -> Boolean)? = null
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -342,6 +498,9 @@ fun SearchScreen(
     var searched by remember { mutableStateOf(false) }
     // (account email, file) — the email is needed to download the file.
     var selected by remember { mutableStateOf<Pair<String, DriveApi.DriveFile>?>(null) }
+    // v0.8.0: type + date filters (Claude's browsing note).
+    var type by remember { mutableStateOf(DriveApi.SearchType.ALL) }
+    var date by remember { mutableStateOf(DriveApi.SearchDate.ANY) }
 
     fun runSearch() {
         val q = query.trim()
@@ -349,9 +508,14 @@ fun SearchScreen(
         scope.launch {
             searching = true
             searched = true
-            hits = searchAll(q)
+            hits = searchAll(q, type, date)
             searching = false
         }
+    }
+
+    // Changing a filter re-runs the current search.
+    LaunchedEffect(type, date) {
+        if (searched && query.trim().isNotEmpty()) runSearch()
     }
 
     Column(
@@ -394,6 +558,37 @@ fun SearchScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(if (searching) "Searching…" else "Search", fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(12.dp))
+        // v0.8.0: type + date filter chips.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DriveApi.SearchType.entries.forEach { option ->
+                FilterPill(
+                    label = option.label,
+                    selected = option == type,
+                    onClick = { type = option }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DriveApi.SearchDate.entries.forEach { option ->
+                FilterPill(
+                    label = option.label,
+                    selected = option == date,
+                    onClick = { date = option }
+                )
+            }
         }
         Spacer(Modifier.height(16.dp))
 
@@ -443,7 +638,41 @@ fun SearchScreen(
         FileDetailsDialog(
             file = file,
             onClose = { selected = null },
-            onOpen = onOpenFile?.let { open -> { open(email, file); selected = null } }
+            onOpen = onOpenFile?.let { open -> { open(email, file); selected = null } },
+            onRename = onRenameFile?.let { rename ->
+                { newName ->
+                    scope.launch {
+                        if (rename(email, file, newName)) runSearch()
+                        selected = null
+                    }
+                }
+            },
+            onDelete = onDeleteFile?.let { delete ->
+                {
+                    scope.launch {
+                        if (delete(email, file)) runSearch()
+                        selected = null
+                    }
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) Color(0xFF4A90E2) else Color(0xFF2A2A32))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
         )
     }
 }

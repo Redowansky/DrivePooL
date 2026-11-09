@@ -15,8 +15,11 @@
          toggle greyed off as "does not send notifications"). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- v0.8.0: backups off — the store holds linked account emails
+         and resumable-upload sessions; none of that belongs in a
+         Google backup. (Claude's note: was true.) -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="DrivePool"
         android:theme="@style/Theme.DrivePool"

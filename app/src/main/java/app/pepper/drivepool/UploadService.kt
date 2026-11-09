@@ -215,8 +215,39 @@ class UploadService : Service() {
             val srcToken = try {
                 Auth.accessTokenForEmail(this, srcEmail)
             } catch (_: Exception) { null } ?: return fail("Could not get access for $srcEmail.")
-            // Download (0–50% of the bar). A fully-downloaded temp file
-            // from a killed earlier run is reused, not re-downloaded.
+            val dstToken = try {
+                Auth.accessTokenForEmail(this, destEmail)
+            } catch (_: Exception) { null } ?: return fail("Could not get access for $destEmail.")
+            // Fingerprint first — the original is only ever deleted
+            // after the copy is verified against it (v0.8.0).
+            update("Moving file", "Checking $fileName…", 0.05f)
+            val srcMeta = DriveApi.getFile(srcToken, fileId)
+                ?: return fail("Could not read $fileName on $srcEmail.")
+
+            // 1. Server-side copy first: the bytes never pass through
+            // the phone, so a move costs no data at all (v0.8.0 —
+            // Claude's "moves cost data twice" note).
+            update("Moving file", "Copying on Google's servers…", 0.3f)
+            val copied = tryServerCopy(srcToken, dstToken, srcEmail, destEmail, fileId, folderId)
+            if (copied != null) {
+                val dstMeta = DriveApi.getFile(dstToken, copied.id)
+                if (dstMeta != null && verified(srcMeta, dstMeta)) {
+                    DriveApi.deleteFile(srcToken, fileId)
+                    done(
+                        "Moving file",
+                        "Moved $fileName to $destEmail ($folderName) — " +
+                            "copied on Google's servers, no data through your phone."
+                    )
+                    return
+                }
+                // A copy landed but could not be verified — remove the
+                // unverified copy and fall through to the phone path
+                // instead of ever deleting the original.
+                DriveApi.deleteFile(dstToken, copied.id)
+            }
+
+            // 2. Fallback: download + resumable upload, then verify
+            // before the original is touched.
             if (tmp.exists() && fileSize > 0 && tmp.length() == fileSize) {
                 update("Moving file", "Downloaded — uploading $fileName…", 0.5f)
             } else {
@@ -252,11 +283,15 @@ class UploadService : Service() {
                 }
             )
             if (id == null) return fail("Upload failed. The original is untouched.")
-            update("Moving file", "Removing the original…", 1f)
-            val srcToken2 = try {
-                Auth.accessTokenForEmail(this, srcEmail)
-            } catch (_: Exception) { null }
-            if (srcToken2 != null) DriveApi.deleteFile(srcToken2, fileId)
+            update("Moving file", "Verifying the copy…", 0.95f)
+            val upMeta = DriveApi.getFile(dstToken, id)
+            if (upMeta == null || !verified(srcMeta, upMeta)) {
+                return fail(
+                    "Upload finished but the copy could not be verified — " +
+                        "the original is untouched. Check $destEmail before retrying."
+                )
+            }
+            DriveApi.deleteFile(srcToken, fileId)
             tmp.delete()
             done("Moving file", "Moved $fileName to $destEmail ($folderName).")
         } catch (e: Exception) {
@@ -268,6 +303,37 @@ class UploadService : Service() {
                 fail("Move failed: ${e.message ?: "unknown error"}")
             }
         }
+    }
+
+    /** Server-side copy (v0.8.0): same account → files.copy directly;
+     *  cross-account → share the file with the destination account,
+     *  then files.copy with its token. Returns the new file, or null
+     *  when the server route is not available (caller falls back to
+     *  download + upload through the phone). */
+    private suspend fun tryServerCopy(
+        srcToken: String,
+        dstToken: String,
+        srcEmail: String,
+        destEmail: String,
+        fileId: String,
+        folderId: String?
+    ): DriveApi.DriveFile? {
+        if (srcEmail == destEmail) {
+            return DriveApi.copyFile(dstToken, fileId, folderId)
+        }
+        if (!DriveApi.shareFile(srcToken, fileId, destEmail)) return null
+        return DriveApi.copyFile(dstToken, fileId, folderId)
+    }
+
+    /** True when [dst] is the same content as [src]: same size, and
+     *  the same md5 checksum when both sides have one. Native Google
+     *  files have no checksum — size match is the whole check. */
+    private fun verified(src: DriveApi.FileMeta, dst: DriveApi.FileMeta): Boolean {
+        if (src.size != dst.size) return false
+        val s = src.md5Checksum
+        val d = dst.md5Checksum
+        if (s.isNullOrEmpty() || d.isNullOrEmpty()) return true
+        return s == d
     }
 
     /** Progress update: shared state for the in-app dialog + notification. */

@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.7.1)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.8.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -41,6 +41,9 @@
 | 📏 **Exact file sizes** | Files show their real size (240 KB, 12.3 MB, 1.2 GB) instead of 0.0 GB |
 | 🔔 **Background uploads** | Uploads and moves run in a foreground service with a persistent notification (progress bar + %) — they survive the app being swiped away, the screen going off, and Doze; uploads are resumable, so a killed transfer picks up where it stopped |
 | ➕ **Floating + menu** | Google Drive-style + button at the bottom right — Upload Files and Add Account live under it; the top bar is just the brand and search |
+| 🔀 **Server-side moves** | Moving a file copies it on Google's servers (share + files.copy across accounts) and verifies size + md5 before deleting the original — a move costs no data at all |
+| 🗑️ **Trash** | Deletes go to trash (recoverable), with a Trash view to restore, delete forever, or empty the trash and reclaim quota |
+| 🔍 **Browse & search** | Infinite scroll, sort by name/date/size, rename, and search filters for file type and date |
 
 ## 📱 Screenshots
 
@@ -84,6 +87,7 @@
 - [x] **v0.6.0** — Background uploads + moves: foreground service with persistent progress notification (bar + %), resumable uploads that continue from the last confirmed byte after a kill; updater download progress fixed to exact sizes too
 - [x] **v0.7.0** — Cleaner dashboard: top bar is brand + search only (no Refresh, no Upload, no Add Drive button), Google Drive-style floating + menu with Upload Files and Add Account; title can no longer wrap as "DrivePoo l"
 - [x] **v0.7.1** — Upload notifications actually appear (notification permission requested, channel created at app start); a one-off quota read failure no longer shows the scary "Drive API is enabled" error — the account keeps its last numbers and the refresh says so
+- [x] **v0.8.0** — Safety + reliability pass (from an external code review): server-side moves (files.copy on Google's servers, verified by size + md5 before the original is deleted — a move costs no data now, with the old download+upload path as fallback, also verified); updater hardened (SHA-256 of the APK verified before install, User-Agent follows the real version); retries with backoff + Retry-After on 429/5xx everywhere; "Today" in the device timezone; honest "Synced HH:mm" label instead of "Live Syncing"; backups off; R8 minify + resource shrinking (smaller APK). New: Trash view (restore, delete forever, empty trash — deletes go to trash now, with confirmation), rename, infinite scroll + sort in the browser, type + date filters in search
 
 ## 🤝 Contributing
 

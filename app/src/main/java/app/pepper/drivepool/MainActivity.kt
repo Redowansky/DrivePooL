@@ -52,6 +52,7 @@ import app.pepper.drivepool.ui.FileBrowserScreen
 import app.pepper.drivepool.ui.FolderCrumb
 import app.pepper.drivepool.ui.SearchHit
 import app.pepper.drivepool.ui.SearchScreen
+import app.pepper.drivepool.ui.TrashScreen
 import app.pepper.drivepool.ui.theme.DrivePoolTheme
 import com.google.android.gms.auth.UserRecoverableAuthException
 import com.google.android.gms.common.api.ApiException
@@ -69,6 +70,7 @@ class MainActivity : ComponentActivity() {
         data object Dashboard : Screen
         data class Browser(val email: String) : Screen
         data object Search : Screen
+        data object Trash : Screen
         data class PickFolder(val destEmail: String) : Screen
     }
 
@@ -202,6 +204,7 @@ class MainActivity : ComponentActivity() {
                             },
                             onOpenAccount = { openBrowser(it.email) },
                             onSearch = { screen = Screen.Search },
+                            onTrash = { screen = Screen.Trash },
                             onUpload = {
                                 // v0.7.1: ask for the notification
                                 // permission first (once ever); the picker
@@ -237,6 +240,8 @@ class MainActivity : ComponentActivity() {
                                 moveDestEmail = null
                             },
                             onOpenFile = { file -> openFile(s.email, file) },
+                            onRenameFile = { file, newName -> renameDriveFile(s.email, file, newName) },
+                            onDeleteFile = { file -> trashDriveFile(s.email, file) },
                             showReauth = reauthEmail == s.email,
                             onReauth = {
                                 reauthEmail = null
@@ -286,8 +291,21 @@ class MainActivity : ComponentActivity() {
                                 )
                                 screen = Screen.Browser(email)
                             },
-                            searchAll = { query -> searchAll(query) },
-                            onOpenFile = { email, file -> openFile(email, file) }
+                            searchAll = { query, type, date -> searchAll(query, type, date) },
+                            onOpenFile = { email, file -> openFile(email, file) },
+                            onRenameFile = { email, file, newName -> renameDriveFile(email, file, newName) },
+                            onDeleteFile = { email, file -> trashDriveFile(email, file) }
+                        )
+                    }
+                    is Screen.Trash -> {
+                        BackHandler { screen = Screen.Dashboard }
+                        TrashScreen(
+                            accounts = accounts,
+                            onBack = { screen = Screen.Dashboard },
+                            loadTrashed = { email, pageToken -> loadTrashed(email, pageToken) },
+                            onRestore = { email, file -> restoreTrashed(email, file) },
+                            onDeleteForever = { email, file -> deleteForever(email, file) },
+                            onEmptyTrash = { email -> emptyTrashFor(email) }
                         )
                     }
                 }
@@ -489,7 +507,8 @@ class MainActivity : ComponentActivity() {
     private suspend fun loadFiles(
         email: String,
         folderId: String?,
-        pageToken: String?
+        pageToken: String?,
+        sort: DriveApi.FileSort = DriveApi.FileSort.NAME_ASC
     ): DriveApi.FilePage? {
         val token = try {
             Auth.accessTokenForEmail(this, email)
@@ -497,12 +516,73 @@ class MainActivity : ComponentActivity() {
             reauthEmail = email
             return null
         } catch (_: Exception) { null } ?: return null
-        return DriveApi.listFiles(token, folderId, pageToken)
+        return DriveApi.listFiles(token, folderId, pageToken, sort)
     }
 
-    /** Move = download from the source account, upload into the
-     *  destination folder, delete the original. The copy is only
-     *  deleted after the upload is confirmed on the destination.
+    /** Renames a file on its Drive. Returns true on success. */
+    private suspend fun renameDriveFile(
+        email: String,
+        file: DriveApi.DriveFile,
+        newName: String
+    ): Boolean {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return false
+        return DriveApi.renameFile(token, file.id, newName)
+    }
+
+    /** Deletes a file by moving it to trash (recoverable, v0.8.0) —
+     *  not a permanent delete. Returns true on success. */
+    private suspend fun trashDriveFile(email: String, file: DriveApi.DriveFile): Boolean {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return false
+        return DriveApi.trashFile(token, file.id)
+    }
+
+    /** One page of trashed files for the Trash screen. */
+    private suspend fun loadTrashed(
+        email: String,
+        pageToken: String?
+    ): DriveApi.FilePage? {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return null
+        return DriveApi.listTrashed(token, pageToken)
+    }
+
+    private suspend fun restoreTrashed(email: String, file: DriveApi.DriveFile): Boolean {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return false
+        return DriveApi.restoreFile(token, file.id)
+    }
+
+    /** Permanent delete — only from Trash, after a confirmation. */
+    private suspend fun deleteForever(email: String, file: DriveApi.DriveFile): Boolean {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return false
+        return DriveApi.deleteFile(token, file.id)
+    }
+
+    /** Empties one account's trash, then refreshes quotas (trash
+     *  counts toward quota, so emptying frees space). */
+    private suspend fun emptyTrashFor(email: String): Boolean {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return false
+        val ok = DriveApi.emptyTrash(token)
+        if (ok) refreshAll()
+        return ok
+    }
+
+    /** Move (v0.8.0): the service first tries a server-side copy —
+     *  files.copy on the destination account (sharing the file to
+     *  it first when the accounts differ), verified by size + md5
+     *  before the original is deleted. Only when the server route
+     *  is unavailable does it fall back to download + re-upload
+     *  through the phone, still verified before deleting.
      *  Runs in UploadService (v0.6.0) so it survives the app being
      *  swiped away — progress comes back through UploadState. */
     private fun startMove(destEmail: String, destFolder: FolderCrumb) {
@@ -593,13 +673,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Name search across EVERY linked account, grouped by account in the UI. */
-    private suspend fun searchAll(query: String): List<SearchHit> {
+    private suspend fun searchAll(
+        query: String,
+        type: DriveApi.SearchType = DriveApi.SearchType.ALL,
+        date: DriveApi.SearchDate = DriveApi.SearchDate.ANY
+    ): List<SearchHit> {
         val hits = mutableListOf<SearchHit>()
         for (acct in Store.loadAccounts(this)) {
             val token = try {
                 Auth.accessTokenForEmail(this, acct.email)
             } catch (_: Exception) { null } ?: continue
-            DriveApi.searchFiles(token, query).forEach { hits.add(SearchHit(acct.email, it)) }
+            DriveApi.searchFiles(token, query, type, date).forEach { hits.add(SearchHit(acct.email, it)) }
         }
         return hits
     }
@@ -618,7 +702,8 @@ class MainActivity : ComponentActivity() {
         val info = updateInfo ?: return
         if (downloadState is Updater.DownloadState.Progress) return
         lifecycleScope.launch {
-            Updater.download(this@MainActivity, info.apkUrl) { state ->
+            // v0.8.0: the published SHA-256 is verified before install.
+            Updater.download(this@MainActivity, info.apkUrl, info.sha256) { state ->
                 downloadState = state
             }
         }

@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PersonAdd
@@ -66,6 +67,10 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -94,7 +99,8 @@ fun DashboardScreen(
     onRemoveAccount: (String) -> Unit,
     onOpenAccount: (DriveAccount) -> Unit = {},
     onSearch: () -> Unit = {},
-    onUpload: () -> Unit = {}
+    onUpload: () -> Unit = {},
+    onTrash: () -> Unit = {}
 ) {
     val totalUsed = accounts.sumOf { it.usedBytes }
     val totalLimit = accounts.sumOf { it.limitBytes }
@@ -112,6 +118,18 @@ fun DashboardScreen(
     // Google Drive-style + menu (v0.7.0): the top bar is just the brand
     // and search now — Upload and Add Drive live under the + button.
     var fabOpen by remember { mutableStateOf(false) }
+    // v0.8.0: honest sync label (Claude's note — "Live Syncing" was
+    // a lie, refresh is manual). Shows the last refresh time in the
+    // device timezone instead of pretending to be live.
+    val lastSync = accounts.maxOfOrNull { it.lastSync } ?: 0L
+    val syncLabel = if (lastSync > 0L) {
+        val fmt = SimpleDateFormat("HH:mm", Locale.getDefault()).apply {
+            timeZone = TimeZone.getDefault()
+        }
+        "Synced ${fmt.format(Date(lastSync))}"
+    } else {
+        "Not synced yet"
+    }
 
     Box(
         modifier = Modifier
@@ -236,7 +254,7 @@ fun DashboardScreen(
                         ) {
                             Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4ADE80)))
                             Spacer(Modifier.width(6.dp))
-                            Text("Live Syncing", color = Color(0xFF4ADE80), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(syncLabel, color = Color(0xFF4ADE80), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -320,6 +338,10 @@ fun DashboardScreen(
             FabMenuItem(icon = Icons.Filled.PersonAdd, label = "Add Account") {
                 fabOpen = false
                 onAddDrive()
+            }
+            FabMenuItem(icon = Icons.Filled.DeleteOutline, label = "Trash") {
+                fabOpen = false
+                onTrash()
             }
         }
     }

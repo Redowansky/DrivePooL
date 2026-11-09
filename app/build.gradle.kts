@@ -12,8 +12,8 @@ android {
         applicationId = "app.pepper.drivepool"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.7.1"
+        versionCode = 15
+        versionName = "0.8.0"
     }
 
     signingConfigs {
@@ -27,7 +27,17 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // v0.8.0: R8 + resource shrinking (Claude's build-hygiene
+            // note — classes.dex was 32 MB, APK 12 MB, with
+            // material-icons-extended bundled whole). Safe here: no
+            // reflection libraries (JSON is org.json, HTTP is OkHttp
+            // with its own consumer rules).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             signingConfig = signingConfigs.getByName("release")
         }
     }

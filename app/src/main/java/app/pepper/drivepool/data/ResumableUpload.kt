@@ -149,6 +149,14 @@ object ResumableUpload {
                             retries++
                             if (retries > MAX_RETRIES) return null
                         }
+                        // v0.8.0: rate limits and server errors get a
+                        // backoff retry (Retry-After when sent) instead
+                        // of failing the whole upload outright.
+                        429, in 500..599 -> {
+                            retries++
+                            if (retries > MAX_RETRIES) return null
+                            delay(backoffDelay(retries, resp.header("Retry-After")))
+                        }
                         else -> return null
                     }
                 }
@@ -195,11 +203,35 @@ object ResumableUpload {
             .addHeader("X-Upload-Content-Length", total.toString())
             .post(RequestBody.create("application/json; charset=UTF-8".toMediaTypeOrNull(), meta.toString()))
             .build()
-        return try {
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) null else resp.header("Location")
+        // v0.8.0: creating the session is retried too — a 429/5xx or
+        // a network blip here used to fail the upload before it began.
+        var attempt = 0
+        while (true) {
+            try {
+                client.newCall(req).execute().use { resp ->
+                    when {
+                        resp.isSuccessful -> return resp.header("Location")
+                        resp.code == 429 || resp.code in 500..599 -> {
+                            if (attempt >= 2) return null
+                        }
+                        else -> return null
+                    }
+                    attempt++
+                    Thread.sleep(backoffDelay(attempt, resp.header("Retry-After")))
+                }
+            } catch (_: IOException) {
+                if (attempt >= 2) return null
+                attempt++
+                Thread.sleep(backoffDelay(attempt, null))
             }
-        } catch (_: IOException) { null }
+        }
+    }
+
+    /** Backoff for one retry: the server's Retry-After (seconds,
+     *  capped at 60) when it sends one, else 2s, 4s, 8s, 16s… */
+    private fun backoffDelay(retries: Int, retryAfter: String?): Long {
+        val after = retryAfter?.toLongOrNull()?.coerceIn(1, 60)
+        return if (after != null) after * 1000L else (1000L shl minOf(retries, 5))
     }
 
     /** Asks the server how many bytes of this session landed.

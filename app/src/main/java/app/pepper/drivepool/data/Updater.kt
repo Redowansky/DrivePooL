@@ -11,13 +11,16 @@ import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import app.pepper.drivepool.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /** In-app updates (v0.2.2): the app checks a small version.json on R2
@@ -41,13 +44,18 @@ import java.util.concurrent.TimeUnit
 object Updater {
     const val VERSION_URL =
         "https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-version.json"
-    private const val UA = "DrivePoolApp/0.2.2"
+    // v0.8.0: was hardcoded "DrivePoolApp/0.2.2" since v0.2.2 — now
+    // follows the real version so the server logs mean something.
+    private val UA get() = "DrivePoolApp/${BuildConfig.VERSION_NAME}"
 
     data class UpdateInfo(
         val versionCode: Int,
         val versionName: String,
         val apkUrl: String,
-        val notes: String
+        val notes: String,
+        // v0.8.0: expected SHA-256 of the APK, published in
+        // version.json — verified before the installer opens.
+        val sha256: String = ""
     )
 
     private val client = OkHttpClient.Builder()
@@ -66,7 +74,8 @@ object Updater {
                     versionCode = json.optInt("versionCode", 0),
                     versionName = json.optString("versionName", ""),
                     apkUrl = json.optString("apkUrl", ""),
-                    notes = json.optString("notes", "Fixed some bugs and improvements.")
+                    notes = json.optString("notes", "Fixed some bugs and improvements."),
+                    sha256 = json.optString("sha256", "")
                 ).takeIf { it.versionCode > 0 && it.apkUrl.isNotBlank() }
             }
         }
@@ -84,9 +93,14 @@ object Updater {
 
     /** Downloads the APK directly with OkHttp (no DownloadManager),
      *  reporting each state through onState (always on the main
-     *  thread). On success the installer opens automatically. */
+     *  thread). On success the installer opens automatically.
+     *
+     *  v0.8.0: when [expectedSha256] is published in version.json,
+     *  the downloaded file's SHA-256 must match it before the
+     *  installer opens — a tampered or truncated download is
+     *  refused instead of installed. */
     suspend fun download(
-        ctx: Context, apkUrl: String, onState: (DownloadState) -> Unit
+        ctx: Context, apkUrl: String, expectedSha256: String?, onState: (DownloadState) -> Unit
     ) {
         onState(DownloadState.Idle)
         // First run needs the one-time "allow installs" toggle; the
@@ -156,6 +170,15 @@ object Updater {
             if (total > 0 && downloaded != total) {
                 throw java.io.IOException("incomplete download ($downloaded / $total bytes)")
             }
+            if (!expectedSha256.isNullOrBlank()) {
+                val actual = withContext(Dispatchers.IO) { sha256Hex(tmp) }
+                if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
+                    throw java.io.IOException(
+                        "SHA-256 mismatch — the download doesn't match the " +
+                            "published hash, not installing."
+                    )
+                }
+            }
             tmp.renameTo(file)
             onState(DownloadState.Done)
             installDownloaded(ctx, file)
@@ -167,6 +190,19 @@ object Updater {
                 )
             )
         }
+    }
+
+    /** SHA-256 of a file, lowercase hex. */
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buf = ByteArray(64 * 1024)
+            var n: Int
+            while (input.read(buf).also { n = it } >= 0) {
+                if (n > 0) digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** Opens the system installer for the downloaded APK. */

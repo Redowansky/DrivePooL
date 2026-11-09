@@ -424,5 +424,5 @@ fun SearchScreen(
         }
     }
 
-    selected?.let { FileDetailsDialog(it) { selected = null } }
+    selected?.let { FileDetailsDialog(file = it, onClose = { selected = null }) }
 }

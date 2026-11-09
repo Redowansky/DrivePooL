@@ -233,7 +233,7 @@ class MainActivity : ComponentActivity() {
                             stack = browserStack,
                             onNavigate = { browserStack = it },
                             onClose = { screen = Screen.Dashboard },
-                            loadFiles = { email, folderId, pageToken -> loadFiles(email, folderId, pageToken) },
+                            loadFiles = { email, folderId, pageToken, sort -> loadFiles(email, folderId, pageToken, sort) },
                             onMoveFile = { file ->
                                 moveSourceEmail = s.email
                                 moveSourceFile = file
@@ -268,7 +268,7 @@ class MainActivity : ComponentActivity() {
                             stack = pickStack,
                             onNavigate = { pickStack = it },
                             onClose = { screen = Screen.Browser(moveSourceEmail ?: return@FileBrowserScreen) },
-                            loadFiles = { email, folderId, pageToken -> loadFiles(email, folderId, pageToken) },
+                            loadFiles = { email, folderId, pageToken, sort -> loadFiles(email, folderId, pageToken, sort) },
                             pickMode = true,
                             onPickFolder = { folder -> startMove(s.destEmail, folder) },
                             showReauth = reauthEmail == s.destEmail,

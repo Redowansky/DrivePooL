@@ -20,6 +20,57 @@ object DriveApi {
     data class Quota(val email: String, val used: Long, val limit: Long)
     data class FileStats(val count: Long, val totalBytes: Long)
 
+    data class DriveFile(
+        val id: String,
+        val name: String,
+        val mimeType: String,
+        val size: Long,
+        val modifiedTime: String
+    ) {
+        val isFolder: Boolean
+            get() = mimeType == "application/vnd.google-apps.folder"
+    }
+
+    data class FilePage(val files: List<DriveFile>, val nextPageToken: String?)
+
+    private fun parseFile(f: JSONObject): DriveFile = DriveFile(
+        id = f.optString("id"),
+        name = f.optString("name"),
+        mimeType = f.optString("mimeType"),
+        size = f.optString("size", "0").toLongOrNull() ?: 0L,
+        modifiedTime = f.optString("modifiedTime")
+    )
+
+    /** One page (100) of a folder's children, folders first, then by name. */
+    suspend fun listFiles(token: String, folderId: String?, pageToken: String?): FilePage? =
+        withContext(Dispatchers.IO) {
+            val parent = folderId ?: "root"
+            val q = "'$parent' in parents and trashed = false"
+            val url = "https://www.googleapis.com/drive/v3/files" +
+                "?pageSize=100&orderBy=folder,name" +
+                "&fields=nextPageToken,files(id,name,mimeType,size,modifiedTime)" +
+                "&q=${java.net.URLEncoder.encode(q, "UTF-8")}" +
+                (pageToken?.let { "&pageToken=$it" } ?: "")
+            val json = get(token, url) ?: return@withContext null
+            val arr = json.optJSONArray("files") ?: return@withContext null
+            val files = (0 until arr.length()).map { parseFile(arr.getJSONObject(it)) }
+            FilePage(files, json.optString("nextPageToken", "").takeIf { it.isNotEmpty() })
+        }
+
+    /** Name search inside one account (first 100 hits, folders + files). */
+    suspend fun searchFiles(token: String, query: String): List<DriveFile> =
+        withContext(Dispatchers.IO) {
+            val safe = query.replace("\\", "\\\\").replace("'", "\\'")
+            val q = "name contains '$safe' and trashed = false"
+            val url = "https://www.googleapis.com/drive/v3/files" +
+                "?pageSize=100&orderBy=folder,name" +
+                "&fields=files(id,name,mimeType,size,modifiedTime)" +
+                "&q=${java.net.URLEncoder.encode(q, "UTF-8")}"
+            val json = get(token, url) ?: return@withContext emptyList()
+            val arr = json.optJSONArray("files") ?: return@withContext emptyList()
+            (0 until arr.length()).map { parseFile(arr.getJSONObject(it)) }
+        }
+
     private fun get(token: String, url: String): JSONObject? = try {
         val req = Request.Builder().url(url)
             .addHeader("Authorization", "Bearer $token").build()

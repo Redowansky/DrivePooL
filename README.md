@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.3.1)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.4.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -33,6 +33,8 @@
 | 🧮 **Stat tiles** | Today (GB added today) · Accounts linked · Total files · Total free space |
 | 🔐 **Read-only by design** | Drive `readonly` scope only — the app can *see* your storage, never edit or delete files |
 | 🗑️ **Red trash per account** | Tap the trash on an account card to unlink that Drive |
+| 📂 **Browse files** | Tap an account card to open its files — folders, back navigation, load more; tap a file for its details |
+| 🔍 **Search all Drives** | Top-bar search looks through every linked Drive by name, results grouped by account |
 
 ## 📱 Screenshots
 
@@ -70,7 +72,7 @@
 - [x] **v0.2.3** — Unlimited accounts: Add Drive signs out first so the chooser always appears; Refresh re-reads every account
 - [x] **v0.3.0** — Redesign (his mockup): ring gauge total card, collapsible accounts section, red trash on each account card
 - [x] **v0.3.1** — Gauge refinement (his v2 mockup): ring shows only the used sliver, full "14.1 GB / 11.00 TB (0.13% used • 10.98 TB free)" line; app icon rebuilt from his cloud artwork, cloud centred in the safe zone so launchers can't crop it into a blue blob
-- [ ] **v0.4.0** — Browse files per account, search across accounts
+- [x] **v0.4.0** — Browse files per account (tap a card, folders + back nav + load more), search across accounts
 - [ ] **v0.5.0** — Move files between Drives, union-style pooled uploads (most-free-space first)
 
 ## 🤝 Contributing

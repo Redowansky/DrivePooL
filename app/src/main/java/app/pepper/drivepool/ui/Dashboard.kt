@@ -25,12 +25,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,7 +77,9 @@ fun DashboardScreen(
     onUpdate: () -> Unit,
     onAddDrive: () -> Unit,
     onRefresh: () -> Unit,
-    onRemoveAccount: (String) -> Unit
+    onRemoveAccount: (String) -> Unit,
+    onOpenAccount: (DriveAccount) -> Unit = {},
+    onSearch: () -> Unit = {}
 ) {
     val totalUsed = accounts.sumOf { it.usedBytes }
     val totalLimit = accounts.sumOf { it.limitBytes }
@@ -103,6 +107,9 @@ fun DashboardScreen(
             Icon(Icons.Filled.Cloud, contentDescription = null, tint = Color(0xFF4A90E2), modifier = Modifier.size(30.dp))
             Spacer(Modifier.width(8.dp))
             Text("DrivePool", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            IconButton(onClick = onSearch) {
+                Icon(Icons.Filled.Search, contentDescription = "Search all Drives", tint = Color.White)
+            }
             IconButton(onClick = onRefresh) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White)
             }
@@ -262,7 +269,7 @@ fun DashboardScreen(
                 if (accountsExpanded) {
                     Spacer(Modifier.height(12.dp))
                     accounts.forEachIndexed { index, account ->
-                        AccountCard(account, index, onRemoveAccount)
+                        AccountCard(account, index, onRemoveAccount, onOpen = { onOpenAccount(account) })
                         if (index < accounts.lastIndex) Spacer(Modifier.height(12.dp))
                     }
                 }
@@ -322,13 +329,19 @@ private fun RingGauge(fraction: Float, usedText: String, totalText: String) {
 }
 
 @Composable
-private fun AccountCard(account: DriveAccount, index: Int, onRemove: (String) -> Unit) {
+private fun AccountCard(
+    account: DriveAccount,
+    index: Int,
+    onRemove: (String) -> Unit,
+    onOpen: () -> Unit = {}
+) {
     val color = Color(ACCOUNT_COLORS[index % ACCOUNT_COLORS.size])
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0xFF121216))
+            .clickable(onClick = onOpen)
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

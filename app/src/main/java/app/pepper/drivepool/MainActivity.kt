@@ -8,18 +8,25 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.lifecycleScope
+import app.pepper.drivepool.data.ACCOUNT_COLORS
 import app.pepper.drivepool.data.Auth
 import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.DriveApi
 import app.pepper.drivepool.data.Store
 import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.ui.DashboardScreen
+import app.pepper.drivepool.ui.FileBrowserScreen
+import app.pepper.drivepool.ui.FolderCrumb
+import app.pepper.drivepool.ui.SearchHit
+import app.pepper.drivepool.ui.SearchScreen
 import app.pepper.drivepool.ui.theme.DrivePoolTheme
 import com.google.android.gms.auth.UserRecoverableAuthException
 import com.google.android.gms.common.api.ApiException
@@ -32,6 +39,20 @@ class MainActivity : ComponentActivity() {
     private var refreshing by mutableStateOf(false)
     private var updateInfo by mutableStateOf<Updater.UpdateInfo?>(null)
     private var downloadState by mutableStateOf<Updater.DownloadState>(Updater.DownloadState.Idle)
+
+    private sealed interface Screen {
+        data object Dashboard : Screen
+        data class Browser(val email: String) : Screen
+        data object Search : Screen
+    }
+
+    private var screen by mutableStateOf<Screen>(Screen.Dashboard)
+    private var browserStack by mutableStateOf<List<FolderCrumb>>(listOf(FolderCrumb(null, "My Drive")))
+
+    private fun openBrowser(email: String) {
+        browserStack = listOf(FolderCrumb(null, "My Drive"))
+        screen = Screen.Browser(email)
+    }
 
     private val signInLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -67,30 +88,70 @@ class MainActivity : ComponentActivity() {
         checkForUpdate()
         setContent {
             DrivePoolTheme {
-                DashboardScreen(
-                    accounts = accounts,
-                    error = error,
-                    hint = hint,
-                    updateInfo = updateInfo,
-                    downloadState = downloadState,
-                    onUpdate = { startUpdateDownload() },
-                    onAddDrive = {
-                        // One tap: account picker, then Drive read-only consent.
-                        // Sign out first: Google remembers the last account and
-                        // would otherwise skip the chooser and re-add the same
-                        // account. There is no cap — add as many as you like.
-                        error = null
-                        hint = null
-                        Auth.client(this).signOut().addOnCompleteListener {
-                            signInLauncher.launch(Auth.signInIntent(this))
-                        }
-                    },
-                    onRefresh = { refreshAll() },
-                    onRemoveAccount = { email ->
-                        Store.removeAccount(this, email)
-                        accounts = Store.loadAccounts(this)
+                when (val s = screen) {
+                    is Screen.Dashboard -> {
+                        DashboardScreen(
+                            accounts = accounts,
+                            error = error,
+                            hint = hint,
+                            updateInfo = updateInfo,
+                            downloadState = downloadState,
+                            onUpdate = { startUpdateDownload() },
+                            onAddDrive = {
+                                // One tap: account picker, then Drive read-only consent.
+                                // Sign out first: Google remembers the last account and
+                                // would otherwise skip the chooser and re-add the same
+                                // account. There is no cap — add as many as you like.
+                                error = null
+                                hint = null
+                                Auth.client(this).signOut().addOnCompleteListener {
+                                    signInLauncher.launch(Auth.signInIntent(this))
+                                }
+                            },
+                            onRefresh = { refreshAll() },
+                            onRemoveAccount = { email ->
+                                Store.removeAccount(this, email)
+                                accounts = Store.loadAccounts(this)
+                            },
+                            onOpenAccount = { openBrowser(it.email) },
+                            onSearch = { screen = Screen.Search }
+                        )
                     }
-                )
+                    is Screen.Browser -> {
+                        val account = accounts.firstOrNull { it.email == s.email }
+                            ?: return@DrivePoolTheme
+                        val index = accounts.indexOf(account)
+                        BackHandler {
+                            if (browserStack.size > 1) {
+                                browserStack = browserStack.dropLast(1)
+                            } else {
+                                screen = Screen.Dashboard
+                            }
+                        }
+                        FileBrowserScreen(
+                            account = account,
+                            accountColor = Color(ACCOUNT_COLORS[index % ACCOUNT_COLORS.size]),
+                            stack = browserStack,
+                            onNavigate = { browserStack = it },
+                            onClose = { screen = Screen.Dashboard },
+                            loadFiles = { email, folderId, pageToken -> loadFiles(email, folderId, pageToken) }
+                        )
+                    }
+                    is Screen.Search -> {
+                        BackHandler { screen = Screen.Dashboard }
+                        SearchScreen(
+                            accounts = accounts,
+                            onBack = { screen = Screen.Dashboard },
+                            onOpenFolder = { email, folder ->
+                                browserStack = listOf(
+                                    FolderCrumb(null, "My Drive"), folder
+                                )
+                                screen = Screen.Browser(email)
+                            },
+                            searchAll = { query -> searchAll(query) }
+                        )
+                    }
+                }
             }
         }
     }
@@ -158,6 +219,31 @@ class MainActivity : ComponentActivity() {
                 refreshing = false
             }
         }
+    }
+
+    /** One page of a folder's children for the file browser. Null = the
+     *  listing failed (token or network); the screen shows Retry. */
+    private suspend fun loadFiles(
+        email: String,
+        folderId: String?,
+        pageToken: String?
+    ): DriveApi.FilePage? {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return null
+        return DriveApi.listFiles(token, folderId, pageToken)
+    }
+
+    /** Name search across EVERY linked account, grouped by account in the UI. */
+    private suspend fun searchAll(query: String): List<SearchHit> {
+        val hits = mutableListOf<SearchHit>()
+        for (acct in Store.loadAccounts(this)) {
+            val token = try {
+                Auth.accessTokenForEmail(this, acct.email)
+            } catch (_: Exception) { null } ?: continue
+            DriveApi.searchFiles(token, query).forEach { hits.add(SearchHit(acct.email, it)) }
+        }
+        return hits
     }
 
     /** Checks R2 version.json once at launch. Fail-open: any problem = no banner. */

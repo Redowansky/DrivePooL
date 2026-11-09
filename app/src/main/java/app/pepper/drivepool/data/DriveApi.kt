@@ -6,14 +6,8 @@ package app.pepper.drivepool.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
-import okio.Buffer
-import okio.BufferedSink
-import okio.source
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -97,65 +91,9 @@ object DriveApi {
         } catch (_: Exception) { false }
     }
 
-    /** Uploads [file] into a Drive folder (null parent = My Drive root).
-     *  Streams from disk with progress. Returns the new file id, or null. */
-    suspend fun uploadFile(
-        token: String,
-        name: String,
-        mimeType: String,
-        parentId: String?,
-        file: File,
-        onProgress: (uploaded: Long, total: Long) -> Unit
-    ): String? = withContext(Dispatchers.IO) {
-        try {
-            val meta = JSONObject().apply {
-                put("name", name)
-                put("mimeType", mimeType)
-                if (parentId != null) put("parents", org.json.JSONArray().put(parentId))
-            }
-            val mediaBody = object : RequestBody() {
-                override fun contentType() = mimeType.toMediaTypeOrNull()
-                override fun contentLength() = file.length()
-                override fun writeTo(sink: BufferedSink) {
-                    val source = file.source()
-                    val buf = Buffer()
-                    var total = 0L
-                    var read: Long
-                    while (source.read(buf, 8192).also { read = it } != -1L) {
-                        sink.write(buf, read)
-                        total += read
-                        onProgress(total, file.length())
-                    }
-                    source.close()
-                }
-            }
-            val multipart = MultipartBody.Builder()
-                .setType("multipart/related".toMediaTypeOrNull()!!)
-                .addPart(
-                    okhttp3.Headers.headersOf("Content-Type", "application/json; charset=UTF-8"),
-                    RequestBody.create(
-                        "application/json; charset=UTF-8".toMediaTypeOrNull(),
-                        meta.toString()
-                    )
-                )
-                .addPart(
-                    okhttp3.Headers.headersOf("Content-Type", mimeType),
-                    mediaBody
-                )
-                .build()
-            val req = Request.Builder()
-                .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
-                .addHeader("Authorization", "Bearer $token")
-                .post(multipart).build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val body = resp.body?.string() ?: return@withContext null
-                JSONObject(body).optString("id").takeIf { it.isNotEmpty() }
-            }
-        } catch (_: Exception) { null }
-    }
-
-    /** Deletes a file (the last step of a move, after the copy landed). */
+    /** Deletes a file (the last step of a move, after the copy landed).
+     *  Uploads now go through ResumableUpload instead of the old
+     *  single-shot multipart upload — it could not resume after a kill. */
     suspend fun deleteFile(token: String, fileId: String): Boolean =
         withContext(Dispatchers.IO) {
             try {

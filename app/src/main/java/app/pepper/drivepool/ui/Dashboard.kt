@@ -62,6 +62,7 @@ import app.pepper.drivepool.data.ACCOUNT_COLORS
 import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.data.formatGb
+import app.pepper.drivepool.data.formatSize
 import app.pepper.drivepool.data.formatPercent
 import app.pepper.drivepool.ui.theme.CardBg
 import app.pepper.drivepool.ui.theme.CardBorder
@@ -143,7 +144,7 @@ fun DashboardScreen(
                         GradientBar(fraction = frac, colors = listOf(Color(0xFF4ADE80)))
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "Downloading… ${formatGb(s.done)} / ${if (s.total > 0) formatGb(s.total) else "?"}",
+                            "Downloading… ${formatSize(s.done)} / ${if (s.total > 0) formatSize(s.total) else "?"}",
                             color = Color(0xFF9A9AA5), fontSize = 13.sp
                         )
                     }

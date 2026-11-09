@@ -23,6 +23,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -40,6 +42,7 @@ import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.DriveApi
 import app.pepper.drivepool.data.Store
 import app.pepper.drivepool.data.Updater
+import app.pepper.drivepool.data.UploadState
 import app.pepper.drivepool.ui.DashboardScreen
 import app.pepper.drivepool.ui.FileBrowserScreen
 import app.pepper.drivepool.ui.FolderCrumb
@@ -74,11 +77,9 @@ class MainActivity : ComponentActivity() {
     private var moveSourceEmail by mutableStateOf<String?>(null)
     private var moveSourceFile by mutableStateOf<DriveApi.DriveFile?>(null)
     private var moveDestEmail by mutableStateOf<String?>(null)
-    // (status text, 0..1) while a move, pooled upload or file open runs.
-    private var moveProgress by mutableStateOf<Pair<String, Float>?>(null)
-    private var uploadProgress by mutableStateOf<Pair<String, Float>?>(null)
+    // (status text, 0..1) while a file-open download runs. Moves and
+    // uploads report through UploadState instead (v0.6.0 service).
     private var openProgress by mutableStateOf<Pair<String, Float>?>(null)
-    private var moveError by mutableStateOf<String?>(null)
     // Account that must approve the broader Drive scope (v0.5.0).
     private var reauthEmail by mutableStateOf<String?>(null)
 
@@ -275,19 +276,31 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // Progress while a move, pooled upload or file open runs.
-                val progress = moveProgress ?: uploadProgress ?: openProgress
+                // Progress while a move/upload (v0.6.0 service, via
+                // UploadState) or a file-open download runs. The service
+                // also shows the same progress in its notification, so
+                // it keeps going when the app is in the background.
+                val transfer by UploadState.state.collectAsState()
+                LaunchedEffect(transfer?.done) {
+                    val t = transfer ?: return@LaunchedEffect
+                    if (!t.done) return@LaunchedEffect
+                    if (t.error != null) {
+                        error = t.error
+                    } else if (t.doneMessage != null) {
+                        hint = t.doneMessage
+                        refreshAll()
+                    }
+                    UploadState.clear()
+                }
+                val progress = openProgress
+                    ?: transfer?.takeIf { !it.done }?.let { it.label to it.progress }
                 if (progress != null) {
                     AlertDialog(
                         onDismissRequest = {},
                         containerColor = Color(0xFF1C1C22),
                         title = {
                             Text(
-                                when {
-                                    moveProgress != null -> "Moving file"
-                                    uploadProgress != null -> "Uploading"
-                                    else -> "Opening file"
-                                },
+                                transfer?.title ?: "Opening file",
                                 color = Color.White, fontWeight = FontWeight.Bold
                             )
                         },
@@ -306,19 +319,6 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                moveError?.let { msg ->
-                    AlertDialog(
-                        onDismissRequest = { moveError = null },
-                        containerColor = Color(0xFF1C1C22),
-                        title = { Text("Couldn't finish", color = Color.White, fontWeight = FontWeight.Bold) },
-                        text = { Text(msg, color = Color(0xFF9A9AA5), fontSize = 14.sp) },
-                        confirmButton = {
-                            TextButton(onClick = { moveError = null }) {
-                                Text("Got it", color = Color(0xFF4A90E2))
-                            }
-                        }
-                    )
-                }
             }
         }
     }
@@ -408,63 +408,20 @@ class MainActivity : ComponentActivity() {
 
     /** Move = download from the source account, upload into the
      *  destination folder, delete the original. The copy is only
-     *  deleted after the upload is confirmed on the destination. */
+     *  deleted after the upload is confirmed on the destination.
+     *  Runs in UploadService (v0.6.0) so it survives the app being
+     *  swiped away — progress comes back through UploadState. */
     private fun startMove(destEmail: String, destFolder: FolderCrumb) {
         val srcEmail = moveSourceEmail ?: return
         val file = moveSourceFile ?: return
         screen = Screen.Browser(srcEmail)
-        lifecycleScope.launch {
-            moveProgress = "Downloading ${file.name}…" to 0f
-            val tmp = File(cacheDir, "move-${System.currentTimeMillis()}")
-            try {
-                val srcToken = try {
-                    Auth.accessTokenForEmail(this@MainActivity, srcEmail)
-                } catch (_: Exception) { null }
-                val dstToken = try {
-                    Auth.accessTokenForEmail(this@MainActivity, destEmail)
-                } catch (_: Exception) { null }
-                if (srcToken == null || dstToken == null) {
-                    moveError = "Could not get access for one of the accounts. " +
-                        "Sign in again and retry."
-                    return@launch
-                }
-                val okDown = DriveApi.downloadFile(srcToken, file.id, tmp) { done, total ->
-                    if (total > 0) {
-                        moveProgress = "Downloading ${file.name}…" to
-                            (done.toFloat() / total * 0.5f)
-                    }
-                }
-                if (!okDown) {
-                    moveError = "Download failed. Check the connection and retry — " +
-                        "the original is untouched."
-                    return@launch
-                }
-                moveProgress = "Uploading to $destEmail…" to 0.5f
-                val newId = DriveApi.uploadFile(
-                    dstToken, file.name, file.mimeType, destFolder.id, tmp
-                ) { done, total ->
-                    if (total > 0) {
-                        moveProgress = "Uploading to $destEmail…" to
-                            (0.5f + done.toFloat() / total * 0.5f)
-                    }
-                }
-                if (newId == null) {
-                    moveError = "Upload failed. The original is untouched — " +
-                        "retry when the connection is better."
-                    return@launch
-                }
-                moveProgress = "Removing the original…" to 1f
-                DriveApi.deleteFile(srcToken, file.id)
-                hint = "Moved ${file.name} to $destEmail."
-                refreshAll()
-            } finally {
-                tmp.delete()
-                moveProgress = null
-                moveSourceFile = null
-                moveSourceEmail = null
-                moveDestEmail = null
-            }
-        }
+        UploadService.startMove(
+            this, srcEmail, file.id, file.name, file.mimeType, file.size,
+            destEmail, destFolder.id, destFolder.name
+        )
+        moveSourceFile = null
+        moveSourceEmail = null
+        moveDestEmail = null
     }
 
     /** Open a Drive file in an external app: download it to the app
@@ -518,60 +475,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Pooled upload: pick a file on the phone, send it to the linked
-     *  account with the most free space. */
+     *  account with the most free space. Runs in UploadService (v0.6.0)
+     *  so it survives the app being swiped away — the service copies
+     *  the file, uploads it resumably, and reports back via UploadState. */
     private fun startPooledUpload(uri: Uri) {
-        lifecycleScope.launch {
-            var name = "upload"
-            val mime = contentResolver.getType(uri) ?: "application/octet-stream"
-            contentResolver.query(
-                uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
-            )?.use { c ->
-                if (c.moveToFirst()) {
-                    val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0) name = c.getString(idx) ?: name
-                }
-            }
-            val stored = Store.loadAccounts(this@MainActivity)
-            if (stored.isEmpty()) {
-                error = "No Google account linked yet — tap Add Drive."
-                return@launch
-            }
-            val target = stored.maxByOrNull { it.freeBytes } ?: return@launch
-            val tmp = File(cacheDir, "upload-${System.currentTimeMillis()}")
-            try {
-                val read = contentResolver.openInputStream(uri)?.use { input ->
-                    tmp.outputStream().use { input.copyTo(it) }
-                }
-                if (read == null) {
-                    error = "Could not read that file."
-                    return@launch
-                }
-                uploadProgress = "Uploading $name to ${target.email}…" to 0f
-                val token = try {
-                    Auth.accessTokenForEmail(this@MainActivity, target.email)
-                } catch (_: Exception) { null }
-                if (token == null) {
-                    error = "Could not get access for ${target.email}. " +
-                        "Sign in again and retry."
-                    return@launch
-                }
-                val id = DriveApi.uploadFile(token, name, mime, null, tmp) { done, total ->
-                    if (total > 0) {
-                        uploadProgress = "Uploading $name to ${target.email}…" to
-                            (done.toFloat() / total)
-                    }
-                }
-                if (id == null) {
-                    error = "Upload failed. Check the connection and retry."
-                    return@launch
-                }
-                hint = "Uploaded $name to ${target.email} (most free space)."
-                refreshAll()
-            } finally {
-                tmp.delete()
-                uploadProgress = null
+        var name = "upload"
+        val mime = contentResolver.getType(uri) ?: "application/octet-stream"
+        contentResolver.query(
+            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) name = c.getString(idx) ?: name
             }
         }
+        val stored = Store.loadAccounts(this)
+        if (stored.isEmpty()) {
+            error = "No Google account linked yet — tap Add Drive."
+            return
+        }
+        val target = stored.maxByOrNull { it.freeBytes } ?: return
+        UploadService.startUpload(this, uri, name, mime, target.email)
     }
 
     /** Name search across EVERY linked account, grouped by account in the UI. */

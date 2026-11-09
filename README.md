@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.6.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.7.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -40,6 +40,7 @@
 | ▶️ **Open in your apps** | File details → Open downloads the file and lets Android ask which player or app to use — DrivePool never plays media itself |
 | 📏 **Exact file sizes** | Files show their real size (240 KB, 12.3 MB, 1.2 GB) instead of 0.0 GB |
 | 🔔 **Background uploads** | Uploads and moves run in a foreground service with a persistent notification (progress bar + %) — they survive the app being swiped away, the screen going off, and Doze; uploads are resumable, so a killed transfer picks up where it stopped |
+| ➕ **Floating + menu** | Google Drive-style + button at the bottom right — Upload Files and Add Account live under it; the top bar is just the brand and search |
 
 ## 📱 Screenshots
 
@@ -81,6 +82,7 @@
 - [x] **v0.5.0** — Move files between Drives (pick a Drive, pick a folder), pooled uploads to the freest Drive; full Drive scope — every account re-approves once
 - [x] **v0.5.1** — Exact file sizes (KB/MB/GB instead of 0.0 GB), Open files in external apps via Android's chooser
 - [x] **v0.6.0** — Background uploads + moves: foreground service with persistent progress notification (bar + %), resumable uploads that continue from the last confirmed byte after a kill; updater download progress fixed to exact sizes too
+- [x] **v0.7.0** — Cleaner dashboard: top bar is brand + search only (no Refresh, no Upload, no Add Drive button), Google Drive-style floating + menu with Upload Files and Add Account; title can no longer wrap as "DrivePoo l"
 
 ## 🤝 Contributing
 

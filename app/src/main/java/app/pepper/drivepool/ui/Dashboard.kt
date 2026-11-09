@@ -4,13 +4,19 @@
 
 package app.pepper.drivepool.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,18 +33,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -54,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -97,33 +109,30 @@ fun DashboardScreen(
     // number is in the text under the bar.
     val ringFraction = maxOf(usedFraction, if (totalUsed > 0) 0.006f else 0f)
     var accountsExpanded by remember { mutableStateOf(true) }
+    // Google Drive-style + menu (v0.7.0): the top bar is just the brand
+    // and search now — Upload and Add Drive live under the + button.
+    var fabOpen by remember { mutableStateOf(false) }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF0B0B0F))
+    ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        // Top bar — own DrivePool branding.
+        // Top bar — brand + search only. (The title used to wrap as
+        // "DrivePoo l" because the bar was crowded — now it has room.)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Cloud, contentDescription = null, tint = Color(0xFF4A90E2), modifier = Modifier.size(30.dp))
             Spacer(Modifier.width(8.dp))
-            Text("DrivePool", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("DrivePool", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
             IconButton(onClick = onSearch) {
                 Icon(Icons.Filled.Search, contentDescription = "Search all Drives", tint = Color.White)
             }
-            IconButton(onClick = onUpload) {
-                Icon(Icons.Filled.Upload, contentDescription = "Upload to the freest Drive", tint = Color.White)
-            }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White)
-            }
-            Button(
-                onClick = onAddDrive,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                shape = RoundedCornerShape(24.dp)
-            ) { Text("Add Drive", fontWeight = FontWeight.Bold) }
         }
 
         if (updateInfo != null) {
@@ -183,7 +192,7 @@ fun DashboardScreen(
             Spacer(Modifier.height(16.dp))
             Text("Add your first Drive", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("Tap Add Drive at the top, pick a Google account, and grant Drive access. That's it — quotas are read from Google Drive and pooled here.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+            Text("Tap the + button at the bottom right, choose Add Account, pick a Google account, and grant Drive access. That's it — quotas are read from Google Drive and pooled here.", color = Color(0xFF9A9AA5), fontSize = 14.sp)
         } else {
             // Total pooled card — ring gauge, like his design mockup.
             Column(
@@ -281,7 +290,70 @@ fun DashboardScreen(
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
+        // Room for the floating + button so the last card is never hidden.
+        Spacer(Modifier.height(96.dp))
+    }
+
+    // Dim the dashboard while the + menu is open; tap anywhere to close.
+    if (fabOpen) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f))
+                .clickable { fabOpen = false }
+        )
+    }
+    AnimatedVisibility(
+        visible = fabOpen,
+        enter = fadeIn() + slideInVertically { it / 2 },
+        exit = fadeOut() + slideOutVertically { it / 2 },
+        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 88.dp)
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.End
+        ) {
+            FabMenuItem(icon = Icons.Filled.Upload, label = "Upload Files") {
+                fabOpen = false
+                onUpload()
+            }
+            FabMenuItem(icon = Icons.Filled.PersonAdd, label = "Add Account") {
+                fabOpen = false
+                onAddDrive()
+            }
+        }
+    }
+    FloatingActionButton(
+        onClick = { fabOpen = !fabOpen },
+        containerColor = Color(0xFF4A90E2),
+        contentColor = Color.White,
+        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+    ) {
+        Icon(
+            if (fabOpen) Icons.Filled.Close else Icons.Filled.Add,
+            contentDescription = if (fabOpen) "Close menu" else "Add"
+        )
+    }
+    }
+}
+
+@Composable
+private fun FabMenuItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(28.dp),
+        color = Color(0xFF2A2A32),
+        contentColor = Color.White,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = Color(0xFF4A90E2))
+            Spacer(Modifier.width(10.dp))
+            Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 

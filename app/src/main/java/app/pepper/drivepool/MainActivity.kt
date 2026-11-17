@@ -83,6 +83,17 @@ class MainActivity : ComponentActivity() {
     private var moveSourceEmail by mutableStateOf<String?>(null)
     private var moveSourceFile by mutableStateOf<DriveApi.DriveFile?>(null)
     private var moveDestEmail by mutableStateOf<String?>(null)
+
+    /** v0.9.0: multi-select bulk op — the marked files + whether
+     *  they are copied (originals stay) or moved (originals go
+     *  after a verified copy). Shares the move's destination picker
+     *  (account, then folder) and the PickFolder screen. */
+    private data class BulkOp(
+        val srcEmail: String,
+        val files: List<DriveApi.DriveFile>,
+        val isCopy: Boolean
+    )
+    private var bulkOp by mutableStateOf<BulkOp?>(null)
     // (status text, 0..1) while a file-open download runs. Moves and
     // uploads report through UploadState instead (v0.6.0 service).
     private var openProgress by mutableStateOf<Pair<String, Float>?>(null)
@@ -255,6 +266,16 @@ class MainActivity : ComponentActivity() {
                             onOpenFile = { file -> openFile(s.email, file) },
                             onRenameFile = { file, newName -> renameDriveFile(s.email, file, newName) },
                             onDeleteFile = { file -> trashDriveFile(s.email, file) },
+                            onBulkCopy = { files ->
+                                bulkOp = BulkOp(s.email, files, isCopy = true)
+                                moveSourceEmail = s.email
+                                moveDestEmail = null
+                            },
+                            onBulkMove = { files ->
+                                bulkOp = BulkOp(s.email, files, isCopy = false)
+                                moveSourceEmail = s.email
+                                moveDestEmail = null
+                            },
                             onUploadHere = {
                                 pendingFolderUpload = s.email to browserStack.last()
                                 withNotificationPermission {
@@ -289,7 +310,12 @@ class MainActivity : ComponentActivity() {
                             onClose = { screen = Screen.Browser(moveSourceEmail ?: return@FileBrowserScreen) },
                             loadFiles = { email, folderId, pageToken, sort -> loadFiles(email, folderId, pageToken, sort) },
                             pickMode = true,
-                            onPickFolder = { folder -> startMove(s.destEmail, folder) },
+                            onPickFolder = { folder -> startBulkOrMove(s.destEmail, folder) },
+                            pickActionLabel = when (bulkOp?.isCopy) {
+                                true -> "Copy here"
+                                false -> "Move here"
+                                null -> "Move here"
+                            },
                             showReauth = reauthEmail == s.destEmail,
                             onReauth = {
                                 reauthEmail = null
@@ -329,18 +355,32 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Destination picker for a move: every account except the source.
+                // Destination picker for a move — and for a bulk
+                // copy/move (v0.9.0): every account except the source.
                 val movingFile = moveSourceFile
-                if (movingFile != null && moveDestEmail == null) {
+                val bulk = bulkOp
+                if ((movingFile != null || bulk != null) && moveDestEmail == null) {
                     val srcEmail = moveSourceEmail
+                    val title = when {
+                        bulk != null && bulk.isCopy -> "Copy ${bulk.files.size} files to which Drive?"
+                        bulk != null -> "Move ${bulk.files.size} files to which Drive?"
+                        else -> "Move to which Drive?"
+                    }
+                    val summary = when {
+                        bulk != null -> bulk.files.take(3).joinToString(", ") { it.name } +
+                            if (bulk.files.size > 3) "…" else ""
+                        else -> movingFile!!.name
+                    }
                     AlertDialog(
-                        onDismissRequest = { moveSourceFile = null; moveSourceEmail = null },
+                        onDismissRequest = {
+                            moveSourceFile = null; moveSourceEmail = null; bulkOp = null
+                        },
                         containerColor = Color(0xFF1C1C22),
-                        title = { Text("Move to which Drive?", color = Color.White, fontWeight = FontWeight.Bold) },
+                        title = { Text(title, color = Color.White, fontWeight = FontWeight.Bold) },
                         text = {
                             Column {
                                 Text(
-                                    movingFile.name,
+                                    summary,
                                     color = Color(0xFF9A9AA5), fontSize = 14.sp
                                 )
                                 Spacer(Modifier.height(8.dp))
@@ -362,7 +402,9 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         confirmButton = {
-                            TextButton(onClick = { moveSourceFile = null; moveSourceEmail = null }) {
+                            TextButton(onClick = {
+                                moveSourceFile = null; moveSourceEmail = null; bulkOp = null
+                            }) {
                                 Text("Cancel", color = Color(0xFF9A9AA5))
                             }
                         }
@@ -615,6 +657,24 @@ class MainActivity : ComponentActivity() {
         moveSourceFile = null
         moveSourceEmail = null
         moveDestEmail = null
+    }
+
+    /** v0.9.0: the PickFolder screen's confirm — a bulk op goes to
+     *  the service's bulk job, a single move to the old path. */
+    private fun startBulkOrMove(destEmail: String, destFolder: FolderCrumb) {
+        val bulk = bulkOp
+        if (bulk != null) {
+            screen = Screen.Browser(bulk.srcEmail)
+            UploadService.startBulk(
+                this, bulk.srcEmail, bulk.files,
+                destEmail, destFolder.id, destFolder.name, bulk.isCopy
+            )
+            bulkOp = null
+            moveSourceEmail = null
+            moveDestEmail = null
+            return
+        }
+        startMove(destEmail, destFolder)
     }
 
     /** Open a Drive file in an external app: download it to the app

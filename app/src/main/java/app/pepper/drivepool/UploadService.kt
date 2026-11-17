@@ -52,6 +52,7 @@ class UploadService : Service() {
     companion object {
         const val ACTION_UPLOAD = "app.pepper.drivepool.UPLOAD"
         const val ACTION_MOVE = "app.pepper.drivepool.MOVE"
+        const val ACTION_BULK = "app.pepper.drivepool.BULK"
         const val ACTION_CANCEL = "app.pepper.drivepool.CANCEL"
         private const val CHANNEL_ID = "uploads"
         private const val NOTIF_ID = 1001
@@ -121,6 +122,35 @@ class UploadService : Service() {
             }
             ctx.startForegroundService(intent)
         }
+
+        /** v0.9.0: bulk copy/move — the browser's multi-select.
+         *  [files] are the marked files (id, name, mime, size).
+         *  [isCopy] false = move (original deleted after a verified
+         *  copy, same rule as a single move). */
+        fun startBulk(
+            ctx: Context,
+            srcEmail: String,
+            files: List<DriveApi.DriveFile>,
+            destEmail: String,
+            folderId: String?,
+            folderName: String,
+            isCopy: Boolean
+        ) {
+            val intent = Intent(ctx, UploadService::class.java).apply {
+                action = ACTION_BULK
+                putExtra("jobId", UUID.randomUUID().toString())
+                putExtra("srcEmail", srcEmail)
+                putStringArrayListExtra("fileIds", ArrayList(files.map { it.id }))
+                putStringArrayListExtra("fileNames", ArrayList(files.map { it.name }))
+                putStringArrayListExtra("fileMimes", ArrayList(files.map { it.mimeType }))
+                putExtra("fileSizes", files.map { it.size }.toLongArray())
+                putExtra("destEmail", destEmail)
+                putExtra("folderId", folderId)
+                putExtra("folderName", folderName)
+                putExtra("isCopy", isCopy)
+            }
+            ctx.startForegroundService(intent)
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -152,6 +182,7 @@ class UploadService : Service() {
                 when (action) {
                     ACTION_UPLOAD -> runUpload(intent, jobId)
                     ACTION_MOVE -> runMove(intent, jobId)
+                    ACTION_BULK -> runBulk(intent, jobId)
                 }
             } finally {
                 stopSelf()
@@ -317,6 +348,80 @@ class UploadService : Service() {
                 notifyCancelled("Move cancelled.")
             } else {
                 fail("Move failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    /** Bulk copy/move (v0.9.0): the browser's multi-select, one
+     *  server-side copy per file, each verified by size + md5 before
+     *  the original is deleted (move only). Deliberately NO phone
+     *  fallback here — a bulk job of multi-GB files must never
+     *  silently download + re-upload through the phone; a file the
+     *  server route can't copy is counted as failed and the rest
+     *  keep going, so one bad file never blocks the batch. */
+    private suspend fun runBulk(intent: Intent, jobId: String) {
+        val verb = if (intent.getBooleanExtra("isCopy", true)) "Copy" else "Move"
+        val past = if (intent.getBooleanExtra("isCopy", true)) "Copied" else "Moved"
+        val srcEmail = intent.getStringExtra("srcEmail") ?: return fail("No source Drive.")
+        val destEmail = intent.getStringExtra("destEmail") ?: return fail("No destination Drive.")
+        val folderId = intent.getStringExtra("folderId")
+        val folderName = intent.getStringExtra("folderName") ?: "My Drive"
+        val isCopy = intent.getBooleanExtra("isCopy", true)
+        val ids = intent.getStringArrayListExtra("fileIds") ?: return fail("Nothing to $verb.")
+        val names = intent.getStringArrayListExtra("fileNames") ?: List(ids.size) { "file" }
+        val total = ids.size
+        try {
+            val srcToken = try {
+                Auth.accessTokenForEmail(this, srcEmail)
+            } catch (_: Exception) { null } ?: return fail("Could not get access for $srcEmail.")
+            val dstToken = try {
+                Auth.accessTokenForEmail(this, destEmail)
+            } catch (_: Exception) { null } ?: return fail("Could not get access for $destEmail.")
+            var ok = 0
+            val failed = mutableListOf<String>()
+            for (i in ids.indices) {
+                val name = names.getOrNull(i) ?: "file"
+                update(
+                    "${verb}ing files",
+                    "$verb ${i + 1} of $total — $name",
+                    i.toFloat() / total
+                )
+                val srcMeta = DriveApi.getFile(srcToken, ids[i])
+                val copied = if (srcMeta != null) {
+                    tryServerCopy(srcToken, dstToken, srcEmail, destEmail, ids[i], folderId)
+                } else null
+                val dstMeta = copied?.let { DriveApi.getFile(dstToken, it.id) }
+                if (copied != null && dstMeta != null && srcMeta != null && verified(srcMeta, dstMeta)) {
+                    if (!isCopy) DriveApi.deleteFile(srcToken, ids[i])
+                    ok++
+                } else {
+                    if (copied != null) DriveApi.deleteFile(dstToken, copied.id)
+                    failed.add(name)
+                }
+            }
+            val where = " to $destEmail ($folderName)"
+            if (ok == 0) {
+                return fail(
+                    "$verb failed — none of the $total files could be copied " +
+                        "on Google's servers. The originals are untouched."
+                )
+            }
+            val tail = if (failed.isEmpty()) {
+                ""
+            } else {
+                " ${failed.size} failed: ${failed.take(3).joinToString(", ")}" +
+                    if (failed.size > 3) "…" else ""
+            }
+            done(
+                "${verb}ing files",
+                "$past $ok of $total$where — copied on Google's servers, " +
+                    "no data through your phone.$tail"
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                notifyCancelled("$verb cancelled.")
+            } else {
+                fail("$verb failed: ${e.message ?: "unknown error"}")
             }
         }
     }

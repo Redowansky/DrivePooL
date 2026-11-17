@@ -6,6 +6,7 @@ package app.pepper.drivepool.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +32,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Upload
@@ -216,24 +219,44 @@ private fun FileDetailsDialog(
 fun FileRow(
     file: DriveApi.DriveFile,
     tint: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    // v0.9.0: multi-select — a marked row shows a blue check and a
+    // tinted background. Long-press marks a file (folders can't be
+    // copied, so they never enter selection).
+    selected: Boolean = false,
+    onLongClick: (() -> Unit)? = null
 ) {
+    val clickModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    } else {
+        Modifier.clickable(onClick = onClick)
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .then(clickModifier)
+            .background(if (selected) Color(0xFF1E3A5F) else Color.Transparent)
             .padding(vertical = 10.dp, horizontal = 4.dp)
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFF2A2A32)),
+            modifier = Modifier.size(40.dp).clip(CircleShape)
+                .background(if (selected) Color(0xFF4A90E2) else Color(0xFF2A2A32)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                if (file.isFolder) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
+                when {
+                    selected -> Icons.Filled.Check
+                    file.isFolder -> Icons.Filled.Folder
+                    else -> Icons.Filled.InsertDriveFile
+                },
                 contentDescription = null,
-                tint = if (file.isFolder) Color(0xFFFACC15) else tint
+                tint = when {
+                    selected -> Color.White
+                    file.isFolder -> Color(0xFFFACC15)
+                    else -> tint
+                }
             )
         }
         Spacer(Modifier.width(12.dp))
@@ -270,6 +293,12 @@ fun FileBrowserScreen(
     // v0.8.1: floating upload button — uploads into the folder on
     // screen. Null in pick mode (the screen is a folder chooser there).
     onUploadHere: (() -> Unit)? = null,
+    // v0.9.0: multi-select — long-press marks files, then these
+    // callbacks run with the marked list. Null in pick mode.
+    onBulkCopy: ((List<DriveApi.DriveFile>) -> Unit)? = null,
+    onBulkMove: ((List<DriveApi.DriveFile>) -> Unit)? = null,
+    // v0.9.0: pick-mode button label ("Move here" / "Copy here").
+    pickActionLabel: String = "Move here",
     // True when the last listing failed because the account must approve
     // the broader Drive permission (v0.5.0 scope change).
     showReauth: Boolean = false,
@@ -287,6 +316,10 @@ fun FileBrowserScreen(
     // v0.8.0: sort order (Claude's browsing note).
     var sort by remember { mutableStateOf(DriveApi.FileSort.NAME_ASC) }
     var showSortMenu by remember { mutableStateOf(false) }
+    // v0.9.0: multi-select — marked file ids, reset when you change
+    // folder. Long-press a file to start marking; tap toggles.
+    var selectedIds by remember(stack) { mutableStateOf<Set<String>>(emptySet()) }
+    val selectionMode = selectedIds.isNotEmpty()
 
     fun load(pageToken: String?, append: Boolean) {
         scope.launch {
@@ -372,6 +405,24 @@ fun FileBrowserScreen(
         )
         Spacer(Modifier.height(12.dp))
 
+        // v0.9.0: selection header — count + clear, only while marking.
+        if (selectionMode) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "${selectedIds.size} selected",
+                    color = Color(0xFF4A90E2), fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { selectedIds = emptySet() }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Clear selection", tint = Color.White)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+
         when {
             loading -> {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -412,13 +463,31 @@ fun FileBrowserScreen(
                     contentPadding = PaddingValues(bottom = 88.dp)
                 ) {
                     items(files, key = { it.id }) { file ->
-                        FileRow(file, accountColor) {
-                            if (file.isFolder) {
-                                onNavigate(stack + FolderCrumb(file.id, file.name))
-                            } else if (!pickMode) {
-                                selected = file
-                            }
-                        }
+                        FileRow(
+                            file = file,
+                            tint = accountColor,
+                            onClick = {
+                                when {
+                                    // Folders never enter selection
+                                    // (a folder copy would not copy its
+                                    // contents) and navigating away
+                                    // would drop the marks.
+                                    file.isFolder && !selectionMode ->
+                                        onNavigate(stack + FolderCrumb(file.id, file.name))
+                                    selectionMode && !file.isFolder ->
+                                        selectedIds = if (file.id in selectedIds) {
+                                            selectedIds - file.id
+                                        } else {
+                                            selectedIds + file.id
+                                        }
+                                    !pickMode && !file.isFolder -> selected = file
+                                }
+                            },
+                            selected = file.id in selectedIds,
+                            onLongClick = if (!pickMode && !file.isFolder) {
+                                { selectedIds = selectedIds + file.id }
+                            } else null
+                        )
                     }
                     if (nextPage != null) {
                         item {
@@ -464,15 +533,46 @@ fun FileBrowserScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Move here — ${current.name}", fontWeight = FontWeight.Bold)
+                Text("$pickActionLabel — ${current.name}", fontWeight = FontWeight.Bold)
+            }
+        }
+        // v0.9.0: bulk action bar — the marked files go to the
+        // destination picker (account, then folder).
+        if (selectionMode) {
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = {
+                        val marked = files.filter { it.id in selectedIds }
+                        selectedIds = emptySet()
+                        onBulkCopy?.invoke(marked)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Copy to Drive", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val marked = files.filter { it.id in selectedIds }
+                        selectedIds = emptySet()
+                        onBulkMove?.invoke(marked)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Move", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
             }
         }
     }
 
     // v0.8.1: floating upload button — it follows you into every
     // folder you open; the picked file lands in the folder on screen,
-    // on the account you are browsing. Hidden in pick mode.
-    if (!pickMode && onUploadHere != null) {
+    // on the account you are browsing. Hidden in pick mode and while
+    // marking (the bulk bar takes the bottom then).
+    if (!pickMode && !selectionMode && onUploadHere != null) {
         FloatingActionButton(
             onClick = onUploadHere,
             containerColor = Color(0xFF4A90E2),

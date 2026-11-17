@@ -4,6 +4,7 @@
 
 package app.pepper.drivepool.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -216,15 +217,19 @@ private fun FileDetailsDialog(
 
 // Public so the Trash screen can reuse it (v0.8.0).
 @Composable
+// v0.9.0: onClick is LAST on purpose — the Search and Trash
+// screens call FileRow with a trailing lambda, which binds to the
+// last function-typed parameter.
+@OptIn(ExperimentalFoundationApi::class)
 fun FileRow(
     file: DriveApi.DriveFile,
     tint: Color,
-    onClick: () -> Unit,
     // v0.9.0: multi-select — a marked row shows a blue check and a
     // tinted background. Long-press marks a file (folders can't be
     // copied, so they never enter selection).
     selected: Boolean = false,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit
 ) {
     val clickModifier = if (onLongClick != null) {
         Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)

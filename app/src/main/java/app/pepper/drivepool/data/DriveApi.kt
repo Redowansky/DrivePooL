@@ -334,10 +334,13 @@ object DriveApi {
         oldParentIds: List<String>
     ): Boolean = withContext(Dispatchers.IO) {
         val enc: (String) -> String = { java.net.URLEncoder.encode(it, "UTF-8") }
-        val remove = oldParentIds.joinToString(",")
+        // v0.10.1: never add and remove the same parent — moving a
+        // file to the folder it is already in is a no-op, not an error.
+        val parent = newParentId ?: "root"
+        val remove = oldParentIds.filter { it != parent }.joinToString(",")
         // Null destination = My Drive root ("root" is a valid parent).
         val url = "https://www.googleapis.com/drive/v3/files/$fileId" +
-            "?addParents=${enc(newParentId ?: "root")}" +
+            "?addParents=${enc(parent)}" +
             (if (remove.isNotEmpty()) "&removeParents=${enc(remove)}" else "")
         callApi(token, "PATCH", url, "{}") != null
     }

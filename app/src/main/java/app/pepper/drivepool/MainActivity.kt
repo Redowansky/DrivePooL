@@ -393,7 +393,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 // Destination picker for a move — and for a bulk
-                // copy/move (v0.9.0): every account except the source.
+                // copy/move (v0.9.0). v0.10.1: files can also move
+                // within their own Drive (root → a folder on the same
+                // account), so the source account is listed too.
                 val movingFile = moveSourceFile
                 val bulk = bulkOp
                 if ((movingFile != null || bulk != null) && moveDestEmail == null) {
@@ -427,7 +429,7 @@ class MainActivity : ComponentActivity() {
                                 Spacer(Modifier.height(8.dp))
                                 accounts.filter {
                                     if (isFolderMove) it.email == srcEmail
-                                    else it.email != srcEmail
+                                    else true // v0.10.1: same Drive too
                                 }.forEach { dest ->
                                     TextButton(
                                         onClick = {
@@ -435,13 +437,13 @@ class MainActivity : ComponentActivity() {
                                             pickStack = listOf(FolderCrumb(null, "My Drive"))
                                             screen = Screen.PickFolder(dest.email)
                                         }
-                                    ) { Text(dest.email, color = Color(0xFF4A90E2)) }
-                                }
-                                if (!isFolderMove && accounts.size < 2) {
-                                    Text(
-                                        "Link a second Drive first — there is nowhere to move it to.",
-                                        color = Color(0xFF9A9AA5), fontSize = 14.sp
-                                    )
+                                    ) {
+                                        Text(
+                                            if (dest.email == srcEmail) "$srcEmail (this Drive)"
+                                            else dest.email,
+                                            color = Color(0xFF4A90E2)
+                                        )
+                                    }
                                 }
                             }
                         },
@@ -693,11 +695,11 @@ class MainActivity : ComponentActivity() {
     private fun startMove(destEmail: String, destFolder: FolderCrumb) {
         val srcEmail = moveSourceEmail ?: return
         val file = moveSourceFile ?: return
-        if (file.isFolder) {
-            // v0.10.0: folders only move within their own Drive
-            // (destEmail == srcEmail is enforced by the picker) —
-            // a single metadata call, no bytes, no service needed.
-            moveFolderSameAccount(srcEmail, file, destFolder)
+        if (destEmail == srcEmail) {
+            // v0.10.1: moving within the same Drive — files and
+            // folders alike — is one metadata call, no bytes, no
+            // service needed. (Folders can only ever move this way.)
+            moveItemSameAccount(srcEmail, file, destFolder)
             return
         }
         screen = Screen.Browser(srcEmail)
@@ -728,10 +730,11 @@ class MainActivity : ComponentActivity() {
         UploadService.startDownload(this, email, file.id, file.name, file.mimeType)
     }
 
-    /** v0.10.0: re-parent a folder inside its own Drive. The list
-     *  is reloaded from the root afterwards, so the moved folder
+    /** v0.10.0: re-parent a folder inside its own Drive. v0.10.1:
+     *  the same call moves a file inside its own Drive too. The
+     *  list is reloaded from the root afterwards, so the moved item
      *  shows up in its new place. */
-    private fun moveFolderSameAccount(
+    private fun moveItemSameAccount(
         email: String,
         file: DriveApi.DriveFile,
         destFolder: FolderCrumb
@@ -764,10 +767,16 @@ class MainActivity : ComponentActivity() {
     }
 
     /** v0.9.0: the PickFolder screen's confirm — a bulk op goes to
-     *  the service's bulk job, a single move to the old path. */
+     *  the service's bulk job, a single move to the old path.
+     *  v0.10.1: a bulk move within the same Drive re-parents each
+     *  file with one metadata call apiece, right here. */
     private fun startBulkOrMove(destEmail: String, destFolder: FolderCrumb) {
         val bulk = bulkOp
         if (bulk != null) {
+            if (!bulk.isCopy && destEmail == bulk.srcEmail) {
+                moveBulkSameAccount(bulk.srcEmail, bulk.files, destFolder)
+                return
+            }
             screen = Screen.Browser(bulk.srcEmail)
             UploadService.startBulk(
                 this, bulk.srcEmail, bulk.files,
@@ -779,6 +788,48 @@ class MainActivity : ComponentActivity() {
             return
         }
         startMove(destEmail, destFolder)
+    }
+
+    /** v0.10.1: move a marked batch inside its own Drive — one
+     *  metadata call per file, no bytes, no service. One file that
+     *  can't move never blocks the rest; the failures are named. */
+    private fun moveBulkSameAccount(
+        email: String,
+        files: List<DriveApi.DriveFile>,
+        destFolder: FolderCrumb
+    ) {
+        lifecycleScope.launch {
+            val token = try {
+                Auth.accessTokenForEmail(this@MainActivity, email)
+            } catch (_: Exception) { null }
+            if (token == null) {
+                error = "Could not get access for $email."
+                screen = Screen.Browser(email)
+                bulkOp = null; moveSourceEmail = null; moveDestEmail = null
+                return@launch
+            }
+            var moved = 0
+            val failed = mutableListOf<String>()
+            for (file in files) {
+                var parents = file.parents
+                if (parents.isEmpty()) {
+                    parents = DriveApi.getFile(token, file.id)?.parents ?: emptyList()
+                }
+                if (DriveApi.moveItem(token, file.id, destFolder.id, parents)) moved++
+                else failed.add(file.name)
+            }
+            browserStack = listOf(FolderCrumb(null, "My Drive"))
+            screen = Screen.Browser(email)
+            if (failed.isEmpty()) {
+                hint = "Moved $moved ${if (moved == 1) "file" else "files"} to ${destFolder.name}."
+                refreshAll()
+            } else {
+                error = "Moved $moved, could not move ${failed.size}: " +
+                    failed.take(3).joinToString(", ") +
+                    if (failed.size > 3) "…" else ""
+            }
+            bulkOp = null; moveSourceEmail = null; moveDestEmail = null
+        }
     }
 
     /** Open a Drive file in an external app: download it to the app

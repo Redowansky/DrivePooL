@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
@@ -457,6 +458,8 @@ fun FileBrowserScreen(
         Spacer(Modifier.height(12.dp))
 
         // v0.9.0: selection header — count + clear, only while marking.
+        // v0.10.1: select all — marks every file (not folders) loaded
+        // in this folder, so 50 images are one tap, not 50.
         if (selectionMode) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -467,6 +470,11 @@ fun FileBrowserScreen(
                     color = Color(0xFF4A90E2), fontSize = 15.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(onClick = {
+                    selectedIds = files.filter { !it.isFolder }.map { it.id }.toSet()
+                }) {
+                    Icon(Icons.Filled.SelectAll, contentDescription = "Select all", tint = Color.White)
+                }
                 IconButton(onClick = { selectedIds = emptySet() }) {
                     Icon(Icons.Filled.Close, contentDescription = "Clear selection", tint = Color.White)
                 }

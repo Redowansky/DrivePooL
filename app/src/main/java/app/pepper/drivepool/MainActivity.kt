@@ -122,6 +122,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // v0.10.0: upload a whole folder — the system folder picker.
+    // The persistable permission is taken here so the service can
+    // still read the tree after the app goes to the background.
+    private var pendingFolderUploadTarget by mutableStateOf<Pair<String, FolderCrumb>?>(null)
+    private val folderTreeLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        val target = pendingFolderUploadTarget
+        pendingFolderUploadTarget = null
+        if (uri != null && target != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+                // Best effort — the service reads the tree right away.
+            }
+            UploadService.startUploadFolder(
+                this, uri, target.first, target.second.id, target.second.name
+            )
+        }
+    }
+
     // v0.7.1: Android 13+ needs POST_NOTIFICATIONS at runtime, or the
     // upload notification never appears (App Info shows the toggle
     // greyed off). The callback always proceeds to the pending action
@@ -276,6 +299,19 @@ class MainActivity : ComponentActivity() {
                                 moveSourceEmail = s.email
                                 moveDestEmail = null
                             },
+                            onCreateFolder = { name ->
+                                createDriveFolder(s.email, browserStack.last().id, name)
+                            },
+                            onDownloadFile = { file -> downloadToDevice(s.email, file) },
+                            onUploadFolder = {
+                                pendingFolderUploadTarget = s.email to browserStack.last()
+                                withNotificationPermission {
+                                    folderTreeLauncher.launch(null)
+                                }
+                            },
+                            // Presence only — opening a folder is
+                            // navigation inside the browser screen.
+                            onOpenFolder = { },
                             onUploadHere = {
                                 pendingFolderUpload = s.email to browserStack.last()
                                 withNotificationPermission {
@@ -339,7 +375,8 @@ class MainActivity : ComponentActivity() {
                             searchAll = { query, type, date -> searchAll(query, type, date) },
                             onOpenFile = { email, file -> openFile(email, file) },
                             onRenameFile = { email, file, newName -> renameDriveFile(email, file, newName) },
-                            onDeleteFile = { email, file -> trashDriveFile(email, file) }
+                            onDeleteFile = { email, file -> trashDriveFile(email, file) },
+                            onDownloadFile = { email, file -> downloadToDevice(email, file) }
                         )
                     }
                     is Screen.Trash -> {
@@ -361,7 +398,11 @@ class MainActivity : ComponentActivity() {
                 val bulk = bulkOp
                 if ((movingFile != null || bulk != null) && moveDestEmail == null) {
                     val srcEmail = moveSourceEmail
+                    // v0.10.0: a folder can only move within its own
+                    // Drive, so the picker offers just that account.
+                    val isFolderMove = movingFile?.isFolder == true
                     val title = when {
+                        isFolderMove -> "Move folder within this Drive?"
                         bulk != null && bulk.isCopy -> "Copy ${bulk.files.size} files to which Drive?"
                         bulk != null -> "Move ${bulk.files.size} files to which Drive?"
                         else -> "Move to which Drive?"
@@ -384,7 +425,10 @@ class MainActivity : ComponentActivity() {
                                     color = Color(0xFF9A9AA5), fontSize = 14.sp
                                 )
                                 Spacer(Modifier.height(8.dp))
-                                accounts.filter { it.email != srcEmail }.forEach { dest ->
+                                accounts.filter {
+                                    if (isFolderMove) it.email == srcEmail
+                                    else it.email != srcEmail
+                                }.forEach { dest ->
                                     TextButton(
                                         onClick = {
                                             moveDestEmail = dest.email
@@ -393,7 +437,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     ) { Text(dest.email, color = Color(0xFF4A90E2)) }
                                 }
-                                if (accounts.size < 2) {
+                                if (!isFolderMove && accounts.size < 2) {
                                     Text(
                                         "Link a second Drive first — there is nowhere to move it to.",
                                         color = Color(0xFF9A9AA5), fontSize = 14.sp
@@ -649,6 +693,13 @@ class MainActivity : ComponentActivity() {
     private fun startMove(destEmail: String, destFolder: FolderCrumb) {
         val srcEmail = moveSourceEmail ?: return
         val file = moveSourceFile ?: return
+        if (file.isFolder) {
+            // v0.10.0: folders only move within their own Drive
+            // (destEmail == srcEmail is enforced by the picker) —
+            // a single metadata call, no bytes, no service needed.
+            moveFolderSameAccount(srcEmail, file, destFolder)
+            return
+        }
         screen = Screen.Browser(srcEmail)
         UploadService.startMove(
             this, srcEmail, file.id, file.name, file.mimeType, file.size,
@@ -657,6 +708,59 @@ class MainActivity : ComponentActivity() {
         moveSourceFile = null
         moveSourceEmail = null
         moveDestEmail = null
+    }
+
+    /** v0.10.0: create a folder inside the folder on screen. */
+    private suspend fun createDriveFolder(
+        email: String,
+        parentId: String?,
+        name: String
+    ): Boolean {
+        val token = try {
+            Auth.accessTokenForEmail(this, email)
+        } catch (_: Exception) { null } ?: return false
+        return DriveApi.createFolder(token, parentId, name) != null
+    }
+
+    /** v0.10.0: Save to device — the service downloads the file
+     *  into the Downloads folder in the background. */
+    private fun downloadToDevice(email: String, file: DriveApi.DriveFile) {
+        UploadService.startDownload(this, email, file.id, file.name, file.mimeType)
+    }
+
+    /** v0.10.0: re-parent a folder inside its own Drive. The list
+     *  is reloaded from the root afterwards, so the moved folder
+     *  shows up in its new place. */
+    private fun moveFolderSameAccount(
+        email: String,
+        file: DriveApi.DriveFile,
+        destFolder: FolderCrumb
+    ) {
+        lifecycleScope.launch {
+            val token = try {
+                Auth.accessTokenForEmail(this@MainActivity, email)
+            } catch (_: Exception) { null }
+            if (token == null) {
+                error = "Could not get access for $email."
+                screen = Screen.Browser(email)
+                moveSourceFile = null; moveSourceEmail = null; moveDestEmail = null
+                return@launch
+            }
+            var parents = file.parents
+            if (parents.isEmpty()) {
+                parents = DriveApi.getFile(token, file.id)?.parents ?: emptyList()
+            }
+            val ok = DriveApi.moveItem(token, file.id, destFolder.id, parents)
+            browserStack = listOf(FolderCrumb(null, "My Drive"))
+            screen = Screen.Browser(email)
+            if (ok) {
+                hint = "Moved ${file.name} to ${destFolder.name}."
+                refreshAll()
+            } else {
+                error = "Could not move ${file.name}. Try again."
+            }
+            moveSourceFile = null; moveSourceEmail = null; moveDestEmail = null
+        }
     }
 
     /** v0.9.0: the PickFolder screen's confirm — a bulk op goes to

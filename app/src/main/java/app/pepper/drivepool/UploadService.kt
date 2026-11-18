@@ -9,13 +9,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
+import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
+import androidx.documentfile.provider.DocumentFile
 import app.pepper.drivepool.data.Auth
 import app.pepper.drivepool.data.DriveApi
 import app.pepper.drivepool.data.ResumeStore
@@ -53,6 +57,8 @@ class UploadService : Service() {
         const val ACTION_UPLOAD = "app.pepper.drivepool.UPLOAD"
         const val ACTION_MOVE = "app.pepper.drivepool.MOVE"
         const val ACTION_BULK = "app.pepper.drivepool.BULK"
+        const val ACTION_DOWNLOAD = "app.pepper.drivepool.DOWNLOAD"
+        const val ACTION_UPLOAD_FOLDER = "app.pepper.drivepool.UPLOAD_FOLDER"
         const val ACTION_CANCEL = "app.pepper.drivepool.CANCEL"
         private const val CHANNEL_ID = "uploads"
         private const val NOTIF_ID = 1001
@@ -151,6 +157,50 @@ class UploadService : Service() {
             }
             ctx.startForegroundService(intent)
         }
+
+        /** v0.10.0: Save to device — downloads a file straight into
+         *  the phone's Downloads folder, in this service so it
+         *  survives the screen going off like uploads do. */
+        fun startDownload(
+            ctx: Context,
+            email: String,
+            fileId: String,
+            fileName: String,
+            mime: String
+        ) {
+            val intent = Intent(ctx, UploadService::class.java).apply {
+                action = ACTION_DOWNLOAD
+                putExtra("jobId", UUID.randomUUID().toString())
+                putExtra("srcEmail", email)
+                putExtra("fileId", fileId)
+                putExtra("fileName", fileName)
+                putExtra("mime", mime)
+            }
+            ctx.startForegroundService(intent)
+        }
+
+        /** v0.10.0: upload a whole local folder — [treeUri] is the
+         *  folder the user picked with the system folder picker.
+         *  The caller must have taken a persistable read permission
+         *  on it first, or the service cannot read it in the
+         *  background. */
+        fun startUploadFolder(
+            ctx: Context,
+            treeUri: Uri,
+            destEmail: String,
+            folderId: String?,
+            folderName: String
+        ) {
+            val intent = Intent(ctx, UploadService::class.java).apply {
+                action = ACTION_UPLOAD_FOLDER
+                putExtra("jobId", UUID.randomUUID().toString())
+                putExtra("treeUri", treeUri)
+                putExtra("destEmail", destEmail)
+                putExtra("folderId", folderId)
+                putExtra("folderName", folderName)
+            }
+            ctx.startForegroundService(intent)
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -183,6 +233,8 @@ class UploadService : Service() {
                     ACTION_UPLOAD -> runUpload(intent, jobId)
                     ACTION_MOVE -> runMove(intent, jobId)
                     ACTION_BULK -> runBulk(intent, jobId)
+                    ACTION_DOWNLOAD -> runDownload(intent, jobId)
+                    ACTION_UPLOAD_FOLDER -> runUploadFolder(intent, jobId)
                 }
             } finally {
                 stopSelf()
@@ -422,6 +474,179 @@ class UploadService : Service() {
                 notifyCancelled("$verb cancelled.")
             } else {
                 fail("$verb failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    /** Save to device (v0.10.0): streams a file straight into the
+     *  phone's Downloads folder — no temp copy on a tight phone.
+     *  Native Google files can't be downloaded with alt=media, so
+     *  those fail fast with a plain explanation. */
+    private suspend fun runDownload(intent: Intent, jobId: String) {
+        val email = intent.getStringExtra("srcEmail") ?: return fail("No source Drive.")
+        val fileId = intent.getStringExtra("fileId") ?: return fail("No file to save.")
+        val name = intent.getStringExtra("fileName") ?: "file"
+        val mime = intent.getStringExtra("mime") ?: "application/octet-stream"
+        if (mime.startsWith("application/vnd.google-apps.") &&
+            mime != "application/vnd.google-apps.folder"
+        ) {
+            return fail(
+                "“$name” is a Google Docs file — it can't be downloaded " +
+                    "as a file. Open it in the Drive app instead."
+            )
+        }
+        try {
+            val token = try {
+                Auth.accessTokenForEmail(this, email)
+            } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val row = contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+            ) ?: return fail("Could not create the download.")
+            val ok = contentResolver.openOutputStream(row)?.use { out ->
+                DriveApi.downloadToStream(token, fileId, out) { done, total ->
+                    val frac = if (total > 0) done.toFloat() / total else 0f
+                    update("Downloading", "Saving $name — ${(frac * 100).toInt()}%", frac)
+                }
+            } ?: false
+            if (!ok) {
+                contentResolver.delete(row, null, null)
+                return fail("Download failed. Nothing was saved.")
+            }
+            done("Downloading", "Saved $name to Downloads.")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                notifyCancelled("Download cancelled.")
+            } else {
+                fail("Download failed: ${e.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    /** Upload a whole local folder (v0.10.0): walks the picked
+     *  folder tree, mirrors subfolders on Drive, and uploads every
+     *  file with the resumable uploader. A file that is already in
+     *  the destination folder with the same name and size is
+     *  skipped, so if the service is killed and Android restarts
+     *  the job, it picks up where it left off instead of uploading
+     *  duplicates. */
+    private suspend fun runUploadFolder(intent: Intent, jobId: String) {
+        val treeUri: Uri = intent.getParcelableExtra("treeUri")
+            ?: return fail("No folder picked.")
+        val destEmail = intent.getStringExtra("destEmail")
+            ?: return fail("No destination Drive.")
+        val folderId = intent.getStringExtra("folderId")
+        val folderName = intent.getStringExtra("folderName") ?: "My Drive"
+        val root = DocumentFile.fromTreeUri(this, treeUri)
+            ?: return fail("Could not open the picked folder.")
+        try {
+            val tokenFor: suspend () -> String? = {
+                try { Auth.accessTokenForEmail(this, destEmail) } catch (_: Exception) { null }
+            }
+            tokenFor() ?: return fail("Could not get access for $destEmail.")
+            // The skip check compares parents, so the root needs its
+            // real id (root-level files don't carry the "root" alias).
+            val effectiveParent = folderId ?: tokenFor()?.let { DriveApi.rootId(it) }
+            var total = 0
+            fun count(dir: DocumentFile) {
+                dir.listFiles().forEach { child ->
+                    if (child.isDirectory) count(child) else if (child.isFile) total++
+                }
+            }
+            count(root)
+            if (total == 0) return fail("The folder is empty — nothing to upload.")
+            var doneCount = 0
+            var failed = 0
+            val tmp = File(cacheDir, "folder-$jobId")
+            suspend fun uploadDir(dir: DocumentFile, parentId: String?) {
+                dir.listFiles().forEach { child ->
+                    if (child.isDirectory) {
+                        val tok = tokenFor() ?: run { failed++; return@forEach }
+                        val created = DriveApi.createFolder(
+                            tok, parentId, child.name ?: "folder"
+                        )
+                        if (created != null) uploadDir(child, created.id) else failed++
+                    } else if (child.isFile) {
+                        val name = child.name ?: "file"
+                        val mime = child.type ?: "application/octet-stream"
+                        val size = child.length()
+                        update(
+                            "Uploading folder",
+                            "Uploading ${doneCount + 1} of $total — $name",
+                            doneCount.toFloat() / total
+                        )
+                        // Already there with the same name + size?
+                        // Skip it — this is what makes a restarted
+                        // job resume instead of duplicating.
+                        val tok = tokenFor()
+                        // Inside a subfolder, parentId is already
+                        // the created folder's real id; at the top
+                        // level it is the resolved root id.
+                        val checkParent = parentId ?: effectiveParent
+                        val alreadyThere = tok != null && DriveApi.searchFiles(tok, name)
+                            .any {
+                                it.name == name && it.size == size &&
+                                    checkParent in it.parents
+                            }
+                        if (alreadyThere) {
+                            doneCount++
+                            return@forEach
+                        }
+                        var ok = false
+                        try {
+                            contentResolver.openInputStream(child.uri)?.use { input ->
+                                tmp.outputStream().use { out -> input.copyTo(out) }
+                            }
+                            val id = ResumableUpload.upload(
+                                ctx = this,
+                                jobId = "$jobId-$doneCount",
+                                name = name,
+                                mimeType = mime,
+                                parentId = parentId,
+                                file = tmp,
+                                tokenFor = tokenFor,
+                                onProgress = { up, tot ->
+                                    val frac = if (tot > 0) {
+                                        (doneCount + up.toFloat() / tot) / total
+                                    } else doneCount.toFloat() / total
+                                    update(
+                                        "Uploading folder",
+                                        "Uploading ${doneCount + 1} of $total — $name",
+                                        frac
+                                    )
+                                }
+                            )
+                            ok = id != null
+                        } catch (_: Exception) {
+                            ok = false
+                        }
+                        tmp.delete()
+                        if (ok) doneCount++ else failed++
+                    }
+                }
+            }
+            uploadDir(root, folderId)
+            val where = " to $destEmail ($folderName)"
+            if (doneCount == 0) {
+                return fail(
+                    "Folder upload failed — none of the $total files " +
+                        "could be uploaded."
+                )
+            }
+            done(
+                "Uploading folder",
+                "Uploaded $doneCount of $total files$where." +
+                    if (failed > 0) " $failed failed." else ""
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                notifyCancelled("Folder upload cancelled.")
+            } else {
+                fail("Folder upload failed: ${e.message ?: "unknown error"}")
             }
         }
     }

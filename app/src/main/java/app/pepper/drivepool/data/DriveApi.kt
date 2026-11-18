@@ -31,7 +31,10 @@ object DriveApi {
         val name: String,
         val mimeType: String,
         val size: Long,
-        val modifiedTime: String
+        val modifiedTime: String,
+        // v0.10.0: parent folder ids — a folder move re-parents by
+        // removing the old parent and adding the new one.
+        val parents: List<String> = emptyList()
     ) {
         val isFolder: Boolean
             get() = mimeType == "application/vnd.google-apps.folder"
@@ -47,7 +50,8 @@ object DriveApi {
         val mimeType: String,
         val size: Long,
         val md5Checksum: String?,
-        val trashed: Boolean
+        val trashed: Boolean,
+        val parents: List<String> = emptyList()
     )
 
     data class FilePage(val files: List<DriveFile>, val nextPageToken: String?)
@@ -88,12 +92,18 @@ object DriveApi {
         MONTH("This month")
     }
 
+    private fun parseParents(f: JSONObject): List<String> {
+        val arr = f.optJSONArray("parents") ?: return emptyList()
+        return (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotEmpty() }
+    }
+
     private fun parseFile(f: JSONObject): DriveFile = DriveFile(
         id = f.optString("id"),
         name = f.optString("name"),
         mimeType = f.optString("mimeType"),
         size = f.optString("size", "0").toLongOrNull() ?: 0L,
-        modifiedTime = f.optString("modifiedTime")
+        modifiedTime = f.optString("modifiedTime"),
+        parents = parseParents(f)
     )
 
     private fun parseMeta(f: JSONObject): FileMeta = FileMeta(
@@ -102,7 +112,8 @@ object DriveApi {
         mimeType = f.optString("mimeType"),
         size = f.optString("size", "0").toLongOrNull() ?: 0L,
         md5Checksum = f.optString("md5Checksum", "").takeIf { it.isNotEmpty() },
-        trashed = f.optBoolean("trashed", false)
+        trashed = f.optBoolean("trashed", false),
+        parents = parseParents(f)
     )
 
     /** One API call with retries on 429 / 5xx (v0.8.0 — Claude's
@@ -179,7 +190,7 @@ object DriveApi {
             val q = "'$parent' in parents and trashed = false"
             val url = "https://www.googleapis.com/drive/v3/files" +
                 "?pageSize=100&orderBy=${java.net.URLEncoder.encode(sort.orderBy, "UTF-8")}" +
-                "&fields=nextPageToken,files(id,name,mimeType,size,modifiedTime)" +
+                "&fields=nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)" +
                 "&q=${java.net.URLEncoder.encode(q, "UTF-8")}" +
                 (pageToken?.let { "&pageToken=$it" } ?: "")
             val json = get(token, url) ?: return@withContext null
@@ -188,12 +199,15 @@ object DriveApi {
             FilePage(files, json.optString("nextPageToken", "").takeIf { it.isNotEmpty() })
         }
 
-    /** Streams a file's bytes into [dest] (used for the move fallback
-     *  and for opening files). Returns false on failure. */
-    suspend fun downloadFile(
+    /** Streams a file's bytes into [out] (used for Save to device —
+     *  straight into the Downloads entry, no temp copy on a tight
+     *  phone). Returns false on failure. Native Google files
+     *  (Docs/Sheets/Slides) cannot be downloaded with alt=media;
+     *  the caller checks the MIME type first. */
+    suspend fun downloadToStream(
         token: String,
         fileId: String,
-        dest: File,
+        out: java.io.OutputStream,
         onProgress: (downloaded: Long, total: Long) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -204,21 +218,32 @@ object DriveApi {
                 if (!resp.isSuccessful) return@withContext false
                 val body = resp.body ?: return@withContext false
                 val total = body.contentLength()
-                dest.outputStream().use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    var done = 0L
-                    body.byteStream().use { input ->
-                        var read: Int
-                        while (input.read(buf).also { read = it } != -1) {
-                            out.write(buf, 0, read)
-                            done += read
-                            onProgress(done, total)
-                        }
+                val buf = ByteArray(64 * 1024)
+                var done = 0L
+                body.byteStream().use { input ->
+                    var read: Int
+                    while (input.read(buf).also { read = it } != -1) {
+                        out.write(buf, 0, read)
+                        done += read
+                        onProgress(done, total)
                     }
                 }
             }
             true
         } catch (_: Exception) { false }
+    }
+
+    /** Streams a file's bytes into [dest] (used for the move fallback
+     *  and for opening files). Returns false on failure. */
+    suspend fun downloadFile(
+        token: String,
+        fileId: String,
+        dest: File,
+        onProgress: (downloaded: Long, total: Long) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        dest.outputStream().use { out ->
+            downloadToStream(token, fileId, out, onProgress)
+        }
     }
 
     /** Permanently deletes a file. Used only after a move has been
@@ -235,7 +260,7 @@ object DriveApi {
             val json = get(
                 token,
                 "https://www.googleapis.com/drive/v3/files/$fileId" +
-                    "?fields=id,name,mimeType,size,md5Checksum,trashed"
+                    "?fields=id,name,mimeType,size,md5Checksum,trashed,parents"
             ) ?: return@withContext null
             parseMeta(json)
         }
@@ -277,6 +302,53 @@ object DriveApi {
             ) ?: return@withContext null
             parseFile(json)
         }
+
+    /** Creates a folder inside [parentId] (null = My Drive root).
+     *  v0.10.0 — the browser's New folder button. */
+    suspend fun createFolder(token: String, parentId: String?, name: String): DriveFile? =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().apply {
+                put("name", name)
+                put("mimeType", "application/vnd.google-apps.folder")
+                if (parentId != null) put("parents", org.json.JSONArray().put(parentId))
+            }.toString()
+            val json = callApi(
+                token, "POST",
+                "https://www.googleapis.com/drive/v3/files" +
+                    "?fields=id,name,mimeType,size,modifiedTime,parents",
+                body
+            ) ?: return@withContext null
+            parseFile(json)
+        }
+
+    /** Re-parents a file or folder within ONE account (v0.10.0 —
+     *  folder moves). A folder cannot be copied across accounts
+     *  (files.copy doesn't copy contents), but moving it inside its
+     *  own Drive is a single metadata call — no bytes move at all.
+     *  [oldParentIds] must list every current parent, or the item
+     *  ends up in two folders at once. */
+    suspend fun moveItem(
+        token: String,
+        fileId: String,
+        newParentId: String?,
+        oldParentIds: List<String>
+    ): Boolean = withContext(Dispatchers.IO) {
+        val enc = java.net.URLEncoder.encode("UTF-8")
+        val remove = oldParentIds.joinToString(",")
+        // Null destination = My Drive root ("root" is a valid parent).
+        val url = "https://www.googleapis.com/drive/v3/files/$fileId" +
+            "?addParents=${enc(newParentId ?: "root")}" +
+            (if (remove.isNotEmpty()) "&removeParents=${enc(remove)}" else "")
+        callApi(token, "PATCH", url, "{}") != null
+    }
+
+    /** The real id of the My Drive root folder (v0.10.0 — the
+     *  folder-upload skip check compares parents, and root-level
+     *  files carry the root's real id, not the "root" alias). */
+    suspend fun rootId(token: String): String? = withContext(Dispatchers.IO) {
+        get(token, "https://www.googleapis.com/drive/v3/files/root?fields=id")
+            ?.optString("id")?.takeIf { it.isNotEmpty() }
+    }
 
     /** Renames a file. */
     suspend fun renameFile(token: String, fileId: String, newName: String): Boolean =
@@ -349,7 +421,7 @@ object DriveApi {
             val q = parts.joinToString(" and ")
             val url = "https://www.googleapis.com/drive/v3/files" +
                 "?pageSize=100&orderBy=folder,name" +
-                "&fields=files(id,name,mimeType,size,modifiedTime)" +
+                "&fields=files(id,name,mimeType,size,modifiedTime,parents)" +
                 "&q=${java.net.URLEncoder.encode(q, "UTF-8")}"
             val json = get(token, url) ?: return@withContext emptyList()
             val arr = json.optJSONArray("files") ?: return@withContext emptyList()

@@ -12,8 +12,8 @@ android {
         applicationId = "app.pepper.drivepool"
         minSdk = 26
         targetSdk = 34
-        versionCode = 17
-        versionName = "0.9.0"
+        versionCode = 18
+        versionName = "0.10.0"
     }
 
     signingConfigs {
@@ -76,4 +76,6 @@ dependencies {
 
     implementation("com.google.android.gms:play-services-auth:20.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // v0.10.0: reading a picked local folder tree (upload a folder).
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Upload
@@ -49,6 +51,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -95,7 +98,10 @@ private fun FileDetailsDialog(
     onMove: (() -> Unit)? = null,
     onOpen: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    // v0.10.0: Save to device (files) and Open folder (folders).
+    onDownload: (() -> Unit)? = null,
+    onOpenFolder: (() -> Unit)? = null
 ) {
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
@@ -112,6 +118,14 @@ private fun FileDetailsDialog(
                 }
                 Text("Modified: ${prettyDate(file.modifiedTime)}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
                 Text("Type: ${file.mimeType}", color = Color(0xFF9A9AA5), fontSize = 14.sp)
+                if (file.isFolder && onMove != null) {
+                    Text(
+                        "A folder can only move within its own Drive — " +
+                            "Google can't copy a folder's contents to " +
+                            "another account. Pick a folder on this Drive.",
+                        color = Color(0xFF9A9AA5), fontSize = 13.sp
+                    )
+                }
                 if (!file.isFolder && onMove != null) {
                     Text(
                         "Moving copies the file on Google's servers when " +
@@ -129,6 +143,13 @@ private fun FileDetailsDialog(
                         color = Color(0xFF9A9AA5), fontSize = 13.sp
                     )
                 }
+                if (!file.isFolder && onDownload != null) {
+                    Text(
+                        "Save to device downloads it to your Downloads " +
+                            "folder in the background, like an upload.",
+                        color = Color(0xFF9A9AA5), fontSize = 13.sp
+                    )
+                }
                 if (onDelete != null) {
                     Text(
                         "Delete moves it to Trash — you can restore it from " +
@@ -140,10 +161,16 @@ private fun FileDetailsDialog(
         },
         confirmButton = {
             Row {
+                if (file.isFolder && onOpenFolder != null) {
+                    TextButton(onClick = onOpenFolder) { Text("Open folder", color = Color(0xFF4A90E2)) }
+                }
                 if (onOpen != null && !file.isFolder) {
                     TextButton(onClick = onOpen) { Text("Open", color = Color(0xFF4A90E2)) }
                 }
-                if (onMove != null && !file.isFolder) {
+                if (onDownload != null && !file.isFolder) {
+                    TextButton(onClick = onDownload) { Text("Save to device", color = Color(0xFF4A90E2)) }
+                }
+                if (onMove != null) {
                     TextButton(onClick = onMove) { Text("Move", color = Color(0xFF4A90E2)) }
                 }
                 if (onRename != null) {
@@ -304,6 +331,13 @@ fun FileBrowserScreen(
     onBulkMove: ((List<DriveApi.DriveFile>) -> Unit)? = null,
     // v0.9.0: pick-mode button label ("Move here" / "Copy here").
     pickActionLabel: String = "Move here",
+    // v0.10.0: the small gaps — new folder, save to device, and
+    // uploading a whole folder. onOpenFolder opens a folder from
+    // its details dialog (long-press a folder).
+    onCreateFolder: (suspend (String) -> Boolean)? = null,
+    onDownloadFile: ((DriveApi.DriveFile) -> Unit)? = null,
+    onUploadFolder: (() -> Unit)? = null,
+    onOpenFolder: ((DriveApi.DriveFile) -> Unit)? = null,
     // True when the last listing failed because the account must approve
     // the broader Drive permission (v0.5.0 scope change).
     showReauth: Boolean = false,
@@ -325,6 +359,11 @@ fun FileBrowserScreen(
     // folder. Long-press a file to start marking; tap toggles.
     var selectedIds by remember(stack) { mutableStateOf<Set<String>>(emptySet()) }
     val selectionMode = selectedIds.isNotEmpty()
+    // v0.10.0: new-folder dialog + the upload FAB's little menu
+    // (Upload files / Upload folder).
+    var showNewFolder by remember { mutableStateOf(false) }
+    var newFolderName by remember { mutableStateOf("") }
+    var showUploadMenu by remember { mutableStateOf(false) }
 
     fun load(pageToken: String?, append: Boolean) {
         scope.launch {
@@ -371,6 +410,13 @@ fun FileBrowserScreen(
                     account.email, color = Color(0xFF9A9AA5), fontSize = 13.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
+            }
+            // v0.10.0: new folder — works in the folder on screen,
+            // including in pick mode (make the folder you're moving into).
+            if (onCreateFolder != null) {
+                IconButton(onClick = { newFolderName = ""; showNewFolder = true }) {
+                    Icon(Icons.Filled.CreateNewFolder, contentDescription = "New folder", tint = Color.White)
+                }
             }
             // v0.8.0: sort menu (Claude's browsing note).
             Box {
@@ -489,8 +535,17 @@ fun FileBrowserScreen(
                                 }
                             },
                             selected = file.id in selectedIds,
-                            onLongClick = if (!pickMode && !file.isFolder) {
-                                { selectedIds = selectedIds + file.id }
+                            onLongClick = if (!pickMode) {
+                                {
+                                    if (file.isFolder) {
+                                        // v0.10.0: long-press a folder
+                                        // opens its details — rename,
+                                        // move (same Drive), delete.
+                                        selected = file
+                                    } else {
+                                        selectedIds = selectedIds + file.id
+                                    }
+                                }
                             } else null
                         )
                     }
@@ -575,18 +630,113 @@ fun FileBrowserScreen(
 
     // v0.8.1: floating upload button — it follows you into every
     // folder you open; the picked file lands in the folder on screen,
-    // on the account you are browsing. Hidden in pick mode and while
-    // marking (the bulk bar takes the bottom then).
+    // on the account you are browsing. v0.10.0: it opens a little
+    // menu now — Upload files, or Upload a whole folder. Hidden in
+    // pick mode and while marking (the bulk bar takes the bottom then).
     if (!pickMode && !selectionMode && onUploadHere != null) {
+        if (showUploadMenu) {
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .background(Color(0xFF000000).copy(alpha = 0.45f))
+                    .clickable { showUploadMenu = false }
+            )
+            Column(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                Surface(
+                    color = Color(0xFF2A2A32),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.clickable {
+                        showUploadMenu = false
+                        onUploadHere()
+                    }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.Upload, contentDescription = null, tint = Color(0xFF4A90E2))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Upload files", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (onUploadFolder != null) {
+                    Surface(
+                        color = Color(0xFF2A2A32),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier.clickable {
+                            showUploadMenu = false
+                            onUploadFolder()
+                        }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Icon(Icons.Filled.Folder, contentDescription = null, tint = Color(0xFF4A90E2))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Upload folder", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
         FloatingActionButton(
-            onClick = onUploadHere,
+            onClick = { showUploadMenu = !showUploadMenu },
             containerColor = Color(0xFF4A90E2),
             contentColor = Color.White,
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
         ) {
-            Icon(Icons.Filled.Upload, contentDescription = "Upload to this folder")
+            Icon(
+                if (showUploadMenu) Icons.Filled.Close else Icons.Filled.Upload,
+                contentDescription = "Upload to this folder"
+            )
         }
     }
+    }
+
+    // v0.10.0: new-folder dialog.
+    if (showNewFolder) {
+        AlertDialog(
+            onDismissRequest = { showNewFolder = false },
+            containerColor = CardBg,
+            title = { Text("New folder", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = newFolderName,
+                    onValueChange = { newFolderName = it },
+                    singleLine = true,
+                    placeholder = { Text("Folder name", color = Color(0xFF9A9AA5)) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF4A90E2),
+                        unfocusedBorderColor = Color(0xFF2E2E36)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = newFolderName.trim()
+                    showNewFolder = false
+                    if (name.isNotEmpty()) {
+                        scope.launch {
+                            if (onCreateFolder?.invoke(name) == true) {
+                                load(null, append = false)
+                            }
+                        }
+                    }
+                }) { Text("Create", color = Color(0xFF4A90E2)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewFolder = false }) {
+                    Text("Cancel", color = Color(0xFF9A9AA5))
+                }
+            }
+        )
     }
 
     selected?.let {
@@ -610,7 +760,18 @@ fun FileBrowserScreen(
                         selected = null
                     }
                 }
-            }
+            },
+            onDownload = onDownloadFile?.let { download ->
+                { download(it); selected = null }
+            },
+            // The dialog just needs to know the button exists —
+            // opening a folder is navigation inside this screen.
+            onOpenFolder = if (onOpenFolder != null) {
+                {
+                    selected = null
+                    onNavigate(stack + FolderCrumb(it.id, it.name))
+                }
+            } else null
         )
     }
 }
@@ -623,7 +784,9 @@ fun SearchScreen(
     searchAll: suspend (String, DriveApi.SearchType, DriveApi.SearchDate) -> List<SearchHit>,
     onOpenFile: ((email: String, file: DriveApi.DriveFile) -> Unit)? = null,
     onRenameFile: (suspend (email: String, file: DriveApi.DriveFile, newName: String) -> Boolean)? = null,
-    onDeleteFile: (suspend (email: String, file: DriveApi.DriveFile) -> Boolean)? = null
+    onDeleteFile: (suspend (email: String, file: DriveApi.DriveFile) -> Boolean)? = null,
+    // v0.10.0: Save to device, from search results too.
+    onDownloadFile: ((email: String, file: DriveApi.DriveFile) -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -788,7 +951,16 @@ fun SearchScreen(
                         selected = null
                     }
                 }
-            }
+            },
+            onDownload = onDownloadFile?.let { download ->
+                { download(email, file); selected = null }
+            },
+            onOpenFolder = if (file.isFolder) {
+                {
+                    selected = null
+                    onOpenFolder(email, FolderCrumb(file.id, file.name))
+                }
+            } else null
         )
     }
 }

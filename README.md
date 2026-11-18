@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.10.0-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.9.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.10.0)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -90,6 +90,7 @@
 - [x] **v0.8.0** — Safety + reliability pass (from an external code review): server-side moves (files.copy on Google's servers, verified by size + md5 before the original is deleted — a move costs no data now, with the old download+upload path as fallback, also verified); updater hardened (SHA-256 of the APK verified before install, User-Agent follows the real version); retries with backoff + Retry-After on 429/5xx everywhere; "Today" in the device timezone; honest "Synced HH:mm" label instead of "Live Syncing"; backups off; R8 minify + resource shrinking (smaller APK). New: Trash view (restore, delete forever, empty trash — deletes go to trash now, with confirmation), rename, infinite scroll + sort in the browser, type + date filters in search
 - [x] **v0.8.1** — Floating upload button in the file browser: it follows you into every folder you open, and the picked file uploads straight into the folder on screen (on the account you are browsing) — no more uploading to the root and moving it after
 - [x] **v0.9.0** — Multi-select in the file browser: long-press a file to start marking, tap to toggle, then **Copy to Drive** or **Move** — pick a destination account and folder, and the whole batch copies on Google's servers (verified by size + md5, originals only deleted for a move after verification). One file that can't be copied never blocks the rest. Folders can't be marked (a folder copy wouldn't copy its contents)
+- [x] **v0.10.0** — The small gaps: **New folder** button in the browser (also in the move picker, so you can make the folder you're moving into); **Save to device** — downloads a file to the Downloads folder in the background service, like an upload; **folder move / rename** — long-press a folder for its details, move it within its own Drive (a single metadata call, no bytes — cross-account folder moves stay impossible, Google can't copy a folder's contents); **upload a whole folder** — the upload button now opens a menu (Upload files / Upload folder), subfolders are mirrored on Drive, and files already there with the same name and size are skipped so a restarted job resumes instead of duplicating
 
 ## 🤝 Contributing
 

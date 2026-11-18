@@ -97,6 +97,10 @@ class MainActivity : ComponentActivity() {
     // (status text, 0..1) while a file-open download runs. Moves and
     // uploads report through UploadState instead (v0.6.0 service).
     private var openProgress by mutableStateOf<Pair<String, Float>?>(null)
+    // v0.10.2: progress for same-Drive moves, which run in the
+    // activity, not the service — (title, label, fraction).
+    // Fraction null = spinning bar (a single file has no count).
+    private var localProgress by mutableStateOf<Triple<String, String, Float?>?>(null)
     // Account that must approve the broader Drive scope (v0.5.0).
     private var reauthEmail by mutableStateOf<String?>(null)
 
@@ -324,7 +328,14 @@ class MainActivity : ComponentActivity() {
                                 Auth.client(this).signOut().addOnCompleteListener {
                                     signInLauncher.launch(Auth.signInIntent(this))
                                 }
-                            }
+                            },
+                            // v0.10.2: the result of the last move —
+                            // it used to live only on the dashboard,
+                            // so a move that landed you back here
+                            // showed nothing at all.
+                            notice = error ?: hint,
+                            noticeIsError = error != null,
+                            onClearNotice = { error = null; hint = null }
                         )
                     }
                     is Screen.PickFolder -> {
@@ -473,27 +484,49 @@ class MainActivity : ComponentActivity() {
                     }
                     UploadState.clear()
                 }
-                val progress = openProgress
-                    ?: transfer?.takeIf { !it.done }?.let { it.label to it.progress }
-                if (progress != null) {
+                // v0.10.2: one progress dialog for every kind of
+                // transfer — file-open downloads, the service's
+                // uploads/moves (UploadState), and same-Drive moves
+                // (localProgress). Fraction null = spinning bar.
+                val opening = openProgress
+                val transferActive = transfer?.takeIf { !it.done }
+                val progressInfo: Triple<String, String, Float?>? = when {
+                    opening != null -> Triple<String, String, Float?>(
+                        "Opening file", opening.first, opening.second
+                    )
+                    localProgress != null -> localProgress
+                    transferActive != null -> Triple<String, String, Float?>(
+                        transferActive.title, transferActive.label, transferActive.progress
+                    )
+                    else -> null
+                }
+                if (progressInfo != null) {
                     AlertDialog(
                         onDismissRequest = {},
                         containerColor = Color(0xFF1C1C22),
                         title = {
                             Text(
-                                transfer?.title ?: "Opening file",
+                                progressInfo.first,
                                 color = Color.White, fontWeight = FontWeight.Bold
                             )
                         },
                         text = {
                             Column {
-                                Text(progress.first, color = Color(0xFF9A9AA5), fontSize = 14.sp)
+                                Text(progressInfo.second, color = Color(0xFF9A9AA5), fontSize = 14.sp)
                                 Spacer(Modifier.height(12.dp))
-                                LinearProgressIndicator(
-                                    progress = { progress.second },
-                                    color = Color(0xFF4A90E2),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                val fraction = progressInfo.third
+                                if (fraction != null) {
+                                    LinearProgressIndicator(
+                                        progress = { fraction },
+                                        color = Color(0xFF4A90E2),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else {
+                                    LinearProgressIndicator(
+                                        color = Color(0xFF4A90E2),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
                         },
                         confirmButton = {}
@@ -740,10 +773,14 @@ class MainActivity : ComponentActivity() {
         destFolder: FolderCrumb
     ) {
         lifecycleScope.launch {
+            // v0.10.2: show the move happening — the dialog is the
+            // same one uploads use, with a spinning bar.
+            localProgress = Triple("Moving", "Moving ${file.name}…", null)
             val token = try {
                 Auth.accessTokenForEmail(this@MainActivity, email)
             } catch (_: Exception) { null }
             if (token == null) {
+                localProgress = null
                 error = "Could not get access for $email."
                 screen = Screen.Browser(email)
                 moveSourceFile = null; moveSourceEmail = null; moveDestEmail = null
@@ -754,6 +791,7 @@ class MainActivity : ComponentActivity() {
                 parents = DriveApi.getFile(token, file.id)?.parents ?: emptyList()
             }
             val ok = DriveApi.moveItem(token, file.id, destFolder.id, parents)
+            localProgress = null
             browserStack = listOf(FolderCrumb(null, "My Drive"))
             screen = Screen.Browser(email)
             if (ok) {
@@ -810,6 +848,11 @@ class MainActivity : ComponentActivity() {
             }
             var moved = 0
             val failed = mutableListOf<String>()
+            // v0.10.2: live progress — "Moving 23 of 50…" with a
+            // bar, like Drive/MEGA, instead of a frozen screen.
+            // A file that still can't move after the API retries
+            // is named at the end, never silently left behind.
+            localProgress = Triple("Moving files", "Moving 0 of ${files.size}…", 0f)
             for (file in files) {
                 var parents = file.parents
                 if (parents.isEmpty()) {
@@ -817,12 +860,19 @@ class MainActivity : ComponentActivity() {
                 }
                 if (DriveApi.moveItem(token, file.id, destFolder.id, parents)) moved++
                 else failed.add(file.name)
+                val done = moved + failed.size
+                localProgress = Triple(
+                    "Moving files",
+                    "Moving $done of ${files.size}…",
+                    done.toFloat() / files.size
+                )
             }
+            localProgress = null
             browserStack = listOf(FolderCrumb(null, "My Drive"))
             screen = Screen.Browser(email)
+            refreshAll()
             if (failed.isEmpty()) {
                 hint = "Moved $moved ${if (moved == 1) "file" else "files"} to ${destFolder.name}."
-                refreshAll()
             } else {
                 error = "Moved $moved, could not move ${failed.size}: " +
                     failed.take(3).joinToString(", ") +

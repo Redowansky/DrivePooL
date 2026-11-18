@@ -339,6 +339,13 @@ fun FileBrowserScreen(
     onDownloadFile: ((DriveApi.DriveFile) -> Unit)? = null,
     onUploadFolder: (() -> Unit)? = null,
     onOpenFolder: ((DriveApi.DriveFile) -> Unit)? = null,
+    // v0.10.2: the result of the last move ("Moved 50 files to
+    // Images." / "Moved 47, could not move 3: …") — it used to
+    // live only on the dashboard, so a move that landed you back
+    // in the browser showed nothing at all.
+    notice: String? = null,
+    noticeIsError: Boolean = false,
+    onClearNotice: (() -> Unit)? = null,
     // True when the last listing failed because the account must approve
     // the broader Drive permission (v0.5.0 scope change).
     showReauth: Boolean = false,
@@ -456,6 +463,31 @@ fun FileBrowserScreen(
             maxLines = 1, overflow = TextOverflow.Ellipsis
         )
         Spacer(Modifier.height(12.dp))
+
+        // v0.10.2: move result banner — dismissible, so the outcome
+        // of a move is visible right where you land afterwards.
+        if (notice != null) {
+            Surface(
+                color = if (noticeIsError) Color(0xFF3D1F1F) else Color(0xFF1E3A5F),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        notice,
+                        color = Color.White, fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { onClearNotice?.invoke() }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = Color.White)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         // v0.9.0: selection header — count + clear, only while marking.
         // v0.10.1: select all — marks every file (not folders) loaded

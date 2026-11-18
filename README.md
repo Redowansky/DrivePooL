@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.10.1-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.10.2-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.10.1)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.10.2)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -92,6 +92,7 @@
 - [x] **v0.9.0** — Multi-select in the file browser: long-press a file to start marking, tap to toggle, then **Copy to Drive** or **Move** — pick a destination account and folder, and the whole batch copies on Google's servers (verified by size + md5, originals only deleted for a move after verification). One file that can't be copied never blocks the rest. Folders can't be marked (a folder copy wouldn't copy its contents)
 - [x] **v0.10.0** — The small gaps: **New folder** button in the browser (also in the move picker, so you can make the folder you're moving into); **Save to device** — downloads a file to the Downloads folder in the background service, like an upload; **folder move / rename** — long-press a folder for its details, move it within its own Drive (a single metadata call, no bytes — cross-account folder moves stay impossible, Google can't copy a folder's contents); **upload a whole folder** — the upload button now opens a menu (Upload files / Upload folder), subfolders are mirrored on Drive, and files already there with the same name and size are skipped so a restarted job resumes instead of duplicating
 - [x] **v0.10.1** — **Select all** in the selection header — marks every file loaded in the folder in one tap (folders never marked). **Move within the same Drive** — the move picker now lists the account you're already on as "(this Drive)", so root → Images on the same account works: one metadata call per file, no bytes, no service; a batch move names the files that couldn't move instead of blocking the rest. Moving a file to the folder it is already in is a no-op, not an error
+- [x] **v0.10.2** — **Move progress, like Drive/MEGA** — a batch move now shows a live dialog ("Moving 23 of 50…") with a progress bar instead of a frozen screen, and a single move shows a spinning bar. **The result is visible** — after a move you land back in the browser with a banner saying what happened ("Moved 50 files to Images." or "Moved 47, could not move 3: …"), dismissible with ✕. **Fewer files left behind** — Drive throttles bursts as a 403 rate-limit error, which the app used to take as a final failure; those now retry with backoff like 429s do
 
 ## 🤝 Contributing
 

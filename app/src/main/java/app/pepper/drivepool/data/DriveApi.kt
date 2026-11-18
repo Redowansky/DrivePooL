@@ -159,6 +159,19 @@ object DriveApi {
                             delay(retryDelay(resp, attempt))
                             attempt++
                         }
+                        // v0.10.2: Drive also throttles bursts as 403
+                        // (userRateLimitExceeded) — a batch of 50
+                        // moves hit this and silently left files
+                        // behind. Only a rate-limit 403 retries; any
+                        // other 403 (permissions, not found) fails.
+                        resp.code == 403 -> {
+                            val text = resp.body?.string().orEmpty()
+                            val rateLimited = text.contains("rateLimitExceeded") ||
+                                text.contains("userRateLimitExceeded")
+                            if (!rateLimited || attempt >= 2) return null
+                            delay(retryDelay(resp, attempt))
+                            attempt++
+                        }
                         else -> return null
                     }
                 }

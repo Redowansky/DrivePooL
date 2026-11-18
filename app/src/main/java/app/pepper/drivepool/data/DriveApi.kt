@@ -333,7 +333,7 @@ object DriveApi {
         newParentId: String?,
         oldParentIds: List<String>
     ): Boolean = withContext(Dispatchers.IO) {
-        val enc = java.net.URLEncoder.encode("UTF-8")
+        val enc: (String) -> String = { java.net.URLEncoder.encode(it, "UTF-8") }
         val remove = oldParentIds.joinToString(",")
         // Null destination = My Drive root ("root" is a valid parent).
         val url = "https://www.googleapis.com/drive/v3/files/$fileId" +

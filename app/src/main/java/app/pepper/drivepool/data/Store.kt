@@ -10,6 +10,24 @@ import android.content.Context
 object Store {
     private const val PREFS = "drivepool"
     private const val KEY_ACCOUNTS = "accounts"
+    // v0.11.0: where "Save to device" puts files — a SAF tree URI
+    // the user picked in Settings, plus its display name. Null =
+    // the phone's Downloads folder (the old behaviour).
+    private const val KEY_DOWNLOAD_FOLDER_URI = "download_folder_uri"
+    private const val KEY_DOWNLOAD_FOLDER_NAME = "download_folder_name"
+
+    fun loadDownloadFolder(ctx: Context): Pair<String, String>? {
+        val uri = prefs(ctx).getString(KEY_DOWNLOAD_FOLDER_URI, null) ?: return null
+        val name = prefs(ctx).getString(KEY_DOWNLOAD_FOLDER_NAME, null) ?: return null
+        return uri to name
+    }
+
+    fun saveDownloadFolder(ctx: Context, uri: String?, name: String?) {
+        prefs(ctx).edit()
+            .putString(KEY_DOWNLOAD_FOLDER_URI, uri)
+            .putString(KEY_DOWNLOAD_FOLDER_NAME, name)
+            .apply()
+    }
 
     private fun prefs(ctx: Context) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

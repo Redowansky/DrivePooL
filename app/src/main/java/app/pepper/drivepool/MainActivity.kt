@@ -47,11 +47,13 @@ import app.pepper.drivepool.data.DriveApi
 import app.pepper.drivepool.data.Store
 import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.data.UploadState
+import androidx.documentfile.provider.DocumentFile
 import app.pepper.drivepool.ui.DashboardScreen
 import app.pepper.drivepool.ui.FileBrowserScreen
 import app.pepper.drivepool.ui.FolderCrumb
 import app.pepper.drivepool.ui.SearchHit
 import app.pepper.drivepool.ui.SearchScreen
+import app.pepper.drivepool.ui.SettingsScreen
 import app.pepper.drivepool.ui.TrashScreen
 import app.pepper.drivepool.ui.theme.DrivePoolTheme
 import com.google.android.gms.auth.UserRecoverableAuthException
@@ -72,6 +74,8 @@ class MainActivity : ComponentActivity() {
         data object Search : Screen
         data object Trash : Screen
         data class PickFolder(val destEmail: String) : Screen
+        // v0.11.0: settings (download folder, …).
+        data object Settings : Screen
     }
 
     private var screen by mutableStateOf<Screen>(Screen.Dashboard)
@@ -103,6 +107,29 @@ class MainActivity : ComponentActivity() {
     private var localProgress by mutableStateOf<Triple<String, String, Float?>?>(null)
     // Account that must approve the broader Drive scope (v0.5.0).
     private var reauthEmail by mutableStateOf<String?>(null)
+
+    // v0.11.0: the download folder picked in Settings — (tree URI,
+    // display name). Null = the phone's Downloads folder.
+    private var downloadFolder by mutableStateOf<Pair<String, String>?>(null)
+    private val downloadFolderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+                // Best effort — the service reads the folder right away.
+            }
+            val name = DocumentFile.fromTreeUri(this, uri)?.name
+                ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Folder"
+            Store.saveDownloadFolder(this, uri.toString(), name)
+            downloadFolder = uri.toString() to name
+        }
+    }
 
     private fun openBrowser(email: String) {
         browserStack = listOf(FolderCrumb(null, "My Drive"))
@@ -220,6 +247,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         accounts = Store.loadAccounts(this)
+        // v0.11.0: the download folder picked in Settings, if any.
+        downloadFolder = Store.loadDownloadFolder(this)
         // v0.7.1: create the "Uploads" channel at app start so the
         // notification toggle exists before any upload runs, and ask
         // once for the runtime notification permission (Android 13+).
@@ -256,6 +285,7 @@ class MainActivity : ComponentActivity() {
                             onOpenAccount = { openBrowser(it.email) },
                             onSearch = { screen = Screen.Search },
                             onTrash = { screen = Screen.Trash },
+                            onSettings = { screen = Screen.Settings },
                             onUpload = {
                                 // v0.7.1: ask for the notification
                                 // permission first (once ever); the picker
@@ -370,6 +400,21 @@ class MainActivity : ComponentActivity() {
                                     signInLauncher.launch(Auth.signInIntent(this))
                                 }
                             }
+                        )
+                    }
+                    is Screen.Settings -> {
+                        BackHandler { screen = Screen.Dashboard }
+                        SettingsScreen(
+                            downloadFolderName = downloadFolder?.second,
+                            onPickDownloadFolder = {
+                                downloadFolderPickerLauncher.launch(null)
+                            },
+                            onResetDownloadFolder = {
+                                Store.saveDownloadFolder(this, null, null)
+                                downloadFolder = null
+                            },
+                            versionName = BuildConfig.VERSION_NAME,
+                            onBack = { screen = Screen.Dashboard }
                         )
                     }
                     is Screen.Search -> {

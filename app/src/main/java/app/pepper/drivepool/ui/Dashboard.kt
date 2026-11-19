@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
@@ -100,7 +101,9 @@ fun DashboardScreen(
     onOpenAccount: (DriveAccount) -> Unit = {},
     onSearch: () -> Unit = {},
     onUpload: () -> Unit = {},
-    onTrash: () -> Unit = {}
+    onTrash: () -> Unit = {},
+    // v0.11.0: gear icon in the top bar opens Settings.
+    onSettings: () -> Unit = {}
 ) {
     val totalUsed = accounts.sumOf { it.usedBytes }
     val totalLimit = accounts.sumOf { it.limitBytes }
@@ -150,6 +153,10 @@ fun DashboardScreen(
             Text("DrivePool", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.weight(1f))
             IconButton(onClick = onSearch) {
                 Icon(Icons.Filled.Search, contentDescription = "Search all Drives", tint = Color.White)
+            }
+            // v0.11.0: gear opens Settings (download folder, …).
+            IconButton(onClick = onSettings) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Color.White)
             }
         }
 

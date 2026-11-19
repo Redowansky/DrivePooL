@@ -499,6 +499,37 @@ class UploadService : Service() {
             val token = try {
                 Auth.accessTokenForEmail(this, email)
             } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
+            // v0.11.0: a download folder picked in Settings — write
+            // straight into it via SAF instead of MediaStore. The
+            // permission was persisted when the folder was picked.
+            val customFolder = Store.loadDownloadFolder(this)
+            if (customFolder != null) {
+                val dir = try {
+                    DocumentFile.fromTreeUri(this, Uri.parse(customFolder.first))
+                } catch (_: Exception) { null }
+                if (dir == null || !dir.exists() || !dir.canWrite()) {
+                    return fail(
+                        "The download folder “${customFolder.second}” can't be " +
+                            "opened anymore — pick it again in Settings, or " +
+                            "switch back to Downloads."
+                    )
+                }
+                // A file with the same name is replaced, not duplicated.
+                dir.findFile(name)?.delete()
+                val file = dir.createFile(mime, name)
+                    ?: return fail("Could not create the download.")
+                val ok = contentResolver.openOutputStream(file.uri)?.use { out ->
+                    DriveApi.downloadToStream(token, fileId, out) { doneBytes, total ->
+                        val frac = if (total > 0) doneBytes.toFloat() / total else 0f
+                        update("Downloading", "Saving $name — ${(frac * 100).toInt()}%", frac)
+                    }
+                } ?: false
+                if (!ok) {
+                    file.delete()
+                    return fail("Download failed. Nothing was saved.")
+                }
+                return done("Downloading", "Saved $name to ${customFolder.second}.")
+            }
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)

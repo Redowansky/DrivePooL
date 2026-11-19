@@ -58,10 +58,11 @@ class UploadService : Service() {
         const val ACTION_UPLOAD = "app.pepper.drivepool.UPLOAD"
         const val ACTION_MOVE = "app.pepper.drivepool.MOVE"
         const val ACTION_BULK = "app.pepper.drivepool.BULK"
+        const val ACTION_BULK_DOWNLOAD = "app.pepper.drivepool.BULK_DOWNLOAD"
         const val ACTION_DOWNLOAD = "app.pepper.drivepool.DOWNLOAD"
         const val ACTION_UPLOAD_FOLDER = "app.pepper.drivepool.UPLOAD_FOLDER"
         const val ACTION_CANCEL = "app.pepper.drivepool.CANCEL"
-        private const val CHANNEL_ID = "uploads"
+        private const val CHANNEL_ID = "transfers"
         private const val NOTIF_ID = 1001
 
         /** [folderId] null = the Drive's root. v0.8.1: the browser's
@@ -89,18 +90,22 @@ class UploadService : Service() {
             ctx.startForegroundService(intent)
         }
 
-        /** v0.7.1: create the channel at app start too, so the
-         *  "Uploads" channel exists (and the notification toggle is
-         *  on) before any upload ever runs — not only when the
-         *  service first starts. Idempotent; safe to call twice. */
+        /** v0.7.1: create the channel at app start too, so it
+         *  exists (and the notification toggle is on) before any
+         *  transfer ever runs — not only when the service first
+         *  starts. Idempotent; safe to call twice. v0.11.1: the
+         *  channel was "Uploads" — downloads show the same
+         *  notification now, so it is "Transfers", and the old
+         *  channel is removed so it doesn't linger in Settings. */
         fun createNotificationChannel(ctx: Context) {
             val manager = ctx.getSystemService(NotificationManager::class.java)
+            manager.deleteNotificationChannel("uploads")
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "Uploads",
+                    "Transfers",
                     NotificationManager.IMPORTANCE_LOW
-                ).apply { description = "DrivePool file uploads and moves" }
+                ).apply { description = "DrivePool file uploads, downloads and moves" }
             )
         }
 
@@ -180,6 +185,23 @@ class UploadService : Service() {
             ctx.startForegroundService(intent)
         }
 
+        /** v0.11.1: save every marked file to the device. */
+        fun startBulkDownload(
+            ctx: Context,
+            email: String,
+            files: List<DriveApi.DriveFile>
+        ) {
+            val intent = Intent(ctx, UploadService::class.java).apply {
+                action = ACTION_BULK_DOWNLOAD
+                putExtra("jobId", UUID.randomUUID().toString())
+                putExtra("srcEmail", email)
+                putStringArrayListExtra("fileIds", ArrayList(files.map { it.id }))
+                putStringArrayListExtra("fileNames", ArrayList(files.map { it.name }))
+                putStringArrayListExtra("fileMimes", ArrayList(files.map { it.mimeType }))
+            }
+            ctx.startForegroundService(intent)
+        }
+
         /** v0.10.0: upload a whole local folder — [treeUri] is the
          *  folder the user picked with the system folder picker.
          *  The caller must have taken a persistable read permission
@@ -207,6 +229,9 @@ class UploadService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentJob: Job? = null
     private var lastNotifUpdate = 0L
+    /** v0.11.1: the notification icon — a download arrow while a
+     *  download job runs, the upload arrow for everything else. */
+    private var currentJobIsDownload = false
 
     override fun onCreate() {
         super.onCreate()
@@ -227,6 +252,7 @@ class UploadService : Service() {
 
         // Foreground immediately — Android kills a service that starts
         // work before posting its notification.
+        currentJobIsDownload = action == ACTION_DOWNLOAD || action == ACTION_BULK_DOWNLOAD
         startForegroundCompat(NOTIF_ID, buildNotification("Preparing…", "Preparing…", 0f, true))
         currentJob = serviceScope.launch {
             try {
@@ -235,6 +261,7 @@ class UploadService : Service() {
                     ACTION_MOVE -> runMove(intent, jobId)
                     ACTION_BULK -> runBulk(intent, jobId)
                     ACTION_DOWNLOAD -> runDownload(intent, jobId)
+                    ACTION_BULK_DOWNLOAD -> runBulkDownload(intent, jobId)
                     ACTION_UPLOAD_FOLDER -> runUploadFolder(intent, jobId)
                 }
             } finally {
@@ -479,18 +506,87 @@ class UploadService : Service() {
         }
     }
 
+    /** A native Google file (Docs/Sheets/Slides…) — it can't be
+     *  downloaded with alt=media, so it fails fast with a plain
+     *  explanation instead of a cryptic API error. Folders aren't
+     *  files, so they don't count. */
+    private fun isGoogleDocsFile(mime: String): Boolean =
+        mime.startsWith("application/vnd.google-apps.") &&
+            mime != "application/vnd.google-apps.folder"
+
+    /** One file saved to the device. [location] is where it went
+     *  ("Downloads" or the Settings folder's name); [error] is the
+     *  plain reason it failed. Shared by the single download and
+     *  the v0.11.1 bulk download, so both land in the same place. */
+    private data class SaveOutcome(
+        val ok: Boolean,
+        val location: String? = null,
+        val error: String? = null
+    )
+
     /** Save to device (v0.10.0): streams a file straight into the
-     *  phone's Downloads folder — no temp copy on a tight phone.
-     *  Native Google files can't be downloaded with alt=media, so
-     *  those fail fast with a plain explanation. */
+     *  phone's download folder — no temp copy on a tight phone.
+     *  The folder is the one picked in Settings, or Downloads. */
+    private suspend fun saveOneFile(
+        token: String,
+        fileId: String,
+        name: String,
+        mime: String,
+        onProgress: (Long, Long) -> Unit
+    ): SaveOutcome {
+        // v0.11.0: a download folder picked in Settings — write
+        // straight into it via SAF instead of MediaStore. The
+        // permission was persisted when the folder was picked.
+        val customFolder = Store.loadDownloadFolder(this)
+        if (customFolder != null) {
+            val dir = try {
+                DocumentFile.fromTreeUri(this, Uri.parse(customFolder.first))
+            } catch (_: Exception) { null }
+            if (dir == null || !dir.exists() || !dir.canWrite()) {
+                return SaveOutcome(
+                    ok = false,
+                    error = "The download folder “${customFolder.second}” can't be " +
+                        "opened anymore — pick it again in Settings, or " +
+                        "switch back to Downloads."
+                )
+            }
+            // A file with the same name is replaced, not duplicated.
+            dir.findFile(name)?.delete()
+            val file = dir.createFile(mime, name)
+                ?: return SaveOutcome(ok = false, error = "Could not create the download.")
+            val ok = contentResolver.openOutputStream(file.uri)?.use { out ->
+                DriveApi.downloadToStream(token, fileId, out, onProgress)
+            } ?: false
+            if (!ok) {
+                file.delete()
+                return SaveOutcome(ok = false, error = "Download failed. Nothing was saved.")
+            }
+            return SaveOutcome(ok = true, location = customFolder.second)
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, mime)
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+        }
+        val row = contentResolver.insert(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+        ) ?: return SaveOutcome(ok = false, error = "Could not create the download.")
+        val ok = contentResolver.openOutputStream(row)?.use { out ->
+            DriveApi.downloadToStream(token, fileId, out, onProgress)
+        } ?: false
+        if (!ok) {
+            contentResolver.delete(row, null, null)
+            return SaveOutcome(ok = false, error = "Download failed. Nothing was saved.")
+        }
+        return SaveOutcome(ok = true, location = "Downloads")
+    }
+
     private suspend fun runDownload(intent: Intent, jobId: String) {
         val email = intent.getStringExtra("srcEmail") ?: return fail("No source Drive.")
         val fileId = intent.getStringExtra("fileId") ?: return fail("No file to save.")
         val name = intent.getStringExtra("fileName") ?: "file"
         val mime = intent.getStringExtra("mime") ?: "application/octet-stream"
-        if (mime.startsWith("application/vnd.google-apps.") &&
-            mime != "application/vnd.google-apps.folder"
-        ) {
+        if (isGoogleDocsFile(mime)) {
             return fail(
                 "“$name” is a Google Docs file — it can't be downloaded " +
                     "as a file. Open it in the Drive app instead."
@@ -500,56 +596,69 @@ class UploadService : Service() {
             val token = try {
                 Auth.accessTokenForEmail(this, email)
             } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
-            // v0.11.0: a download folder picked in Settings — write
-            // straight into it via SAF instead of MediaStore. The
-            // permission was persisted when the folder was picked.
-            val customFolder = Store.loadDownloadFolder(this)
-            if (customFolder != null) {
-                val dir = try {
-                    DocumentFile.fromTreeUri(this, Uri.parse(customFolder.first))
-                } catch (_: Exception) { null }
-                if (dir == null || !dir.exists() || !dir.canWrite()) {
-                    return fail(
-                        "The download folder “${customFolder.second}” can't be " +
-                            "opened anymore — pick it again in Settings, or " +
-                            "switch back to Downloads."
-                    )
-                }
-                // A file with the same name is replaced, not duplicated.
-                dir.findFile(name)?.delete()
-                val file = dir.createFile(mime, name)
-                    ?: return fail("Could not create the download.")
-                val ok = contentResolver.openOutputStream(file.uri)?.use { out ->
-                    DriveApi.downloadToStream(token, fileId, out) { doneBytes, total ->
-                        val frac = if (total > 0) doneBytes.toFloat() / total else 0f
-                        update("Downloading", "Saving $name — ${(frac * 100).toInt()}%", frac)
-                    }
-                } ?: false
-                if (!ok) {
-                    file.delete()
-                    return fail("Download failed. Nothing was saved.")
-                }
-                return done("Downloading", "Saved $name to ${customFolder.second}.")
+            val result = saveOneFile(token, fileId, name, mime) { doneBytes, total ->
+                val frac = if (total > 0) doneBytes.toFloat() / total else 0f
+                update("Downloading", "Saving $name — ${(frac * 100).toInt()}%", frac)
             }
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, name)
-                put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            if (!result.ok) return fail(result.error ?: "Download failed.")
+            done("Downloading", "Saved $name to ${result.location}.")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                notifyCancelled("Download cancelled.")
+            } else {
+                fail("Download failed: ${e.message ?: "unknown error"}")
             }
-            val row = contentResolver.insert(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
-            ) ?: return fail("Could not create the download.")
-            val ok = contentResolver.openOutputStream(row)?.use { out ->
-                DriveApi.downloadToStream(token, fileId, out) { done, total ->
-                    val frac = if (total > 0) done.toFloat() / total else 0f
-                    update("Downloading", "Saving $name — ${(frac * 100).toInt()}%", frac)
+        }
+    }
+
+    /** Bulk download (v0.11.1): every marked file saved to the
+     *  device, one after another, into the same folder a single
+     *  download uses. The notification shows the overall count
+     *  ("Saving 3 of 25…") on one progress bar, and the result
+     *  names the files that couldn't be saved. Google Docs files
+     *  are skipped up front — they can't be downloaded as files. */
+    private suspend fun runBulkDownload(intent: Intent, jobId: String) {
+        val email = intent.getStringExtra("srcEmail") ?: return fail("No source Drive.")
+        val ids = intent.getStringArrayListExtra("fileIds") ?: return fail("No files to save.")
+        val names = intent.getStringArrayListExtra("fileNames")
+            ?: List(ids.size) { "file" }
+        val mimes = intent.getStringArrayListExtra("fileMimes")
+            ?: List(ids.size) { "application/octet-stream" }
+        val total = ids.size
+        var saved = 0
+        val failed = mutableListOf<String>()
+        var location: String? = null
+        try {
+            val token = try {
+                Auth.accessTokenForEmail(this, email)
+            } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
+            for (i in ids.indices) {
+                val name = names.getOrNull(i) ?: "file"
+                val mime = mimes.getOrNull(i) ?: "application/octet-stream"
+                if (isGoogleDocsFile(mime)) {
+                    failed += "$name (Google Docs file)"
+                    continue
                 }
-            } ?: false
-            if (!ok) {
-                contentResolver.delete(row, null, null)
-                return fail("Download failed. Nothing was saved.")
+                val result = saveOneFile(token, ids[i], name, mime) { doneBytes, fileTotal ->
+                    val fileFrac = if (fileTotal > 0) doneBytes.toFloat() / fileTotal else 0f
+                    val overall = (saved + fileFrac) / total
+                    update("Downloading", "Saving ${saved + 1} of $total — $name", overall)
+                }
+                if (result.ok) {
+                    saved++
+                    location = result.location
+                } else {
+                    failed += name
+                }
             }
-            done("Downloading", "Saved $name to Downloads.")
+            val tail = if (failed.isEmpty()) {
+                ""
+            } else {
+                " ${failed.size} failed: ${failed.take(3).joinToString(", ")}" +
+                    if (failed.size > 3) "…" else ""
+            }
+            if (saved == 0) return fail("Nothing was saved.$tail")
+            done("Downloading", "Saved $saved of $total to ${location ?: "Downloads"}.$tail")
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) {
                 notifyCancelled("Download cancelled.")
@@ -763,7 +872,10 @@ class UploadService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setSmallIcon(
+                if (currentJobIsDownload) android.R.drawable.stat_sys_download
+                else android.R.drawable.stat_sys_upload
+            )
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(openApp)

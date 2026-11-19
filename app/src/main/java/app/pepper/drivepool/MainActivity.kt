@@ -333,6 +333,7 @@ class MainActivity : ComponentActivity() {
                                 moveSourceEmail = s.email
                                 moveDestEmail = null
                             },
+                            onBulkDownload = { files -> downloadBulk(s.email, files) },
                             onCreateFolder = { name ->
                                 createDriveFolder(s.email, browserStack.last().id, name)
                             },
@@ -803,9 +804,21 @@ class MainActivity : ComponentActivity() {
     }
 
     /** v0.10.0: Save to device — the service downloads the file
-     *  into the Downloads folder in the background. */
+     *  into the download folder in the background. v0.11.1: the
+     *  notification permission is asked for here too, so the
+     *  download progress can actually show in the shade. */
     private fun downloadToDevice(email: String, file: DriveApi.DriveFile) {
-        UploadService.startDownload(this, email, file.id, file.name, file.mimeType)
+        withNotificationPermission {
+            UploadService.startDownload(this, email, file.id, file.name, file.mimeType)
+        }
+    }
+
+    /** v0.11.1: save every marked file to the device, one after
+     *  another, into the same folder a single download uses. */
+    private fun downloadBulk(email: String, files: List<DriveApi.DriveFile>) {
+        withNotificationPermission {
+            UploadService.startBulkDownload(this, email, files)
+        }
     }
 
     /** v0.10.0: re-parent a folder inside its own Drive. v0.10.1:

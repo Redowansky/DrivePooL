@@ -35,8 +35,12 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Sort
@@ -330,6 +334,7 @@ fun FileBrowserScreen(
     // callbacks run with the marked list. Null in pick mode.
     onBulkCopy: ((List<DriveApi.DriveFile>) -> Unit)? = null,
     onBulkMove: ((List<DriveApi.DriveFile>) -> Unit)? = null,
+    onBulkDownload: ((List<DriveApi.DriveFile>) -> Unit)? = null,
     // v0.9.0: pick-mode button label ("Move here" / "Copy here").
     pickActionLabel: String = "Move here",
     // v0.10.0: the small gaps — new folder, save to device, and
@@ -372,6 +377,7 @@ fun FileBrowserScreen(
     var showNewFolder by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
     var showUploadMenu by remember { mutableStateOf(false) }
+    var showBulkMenu by remember { mutableStateOf(false) }
 
     fun load(pageToken: String?, append: Boolean) {
         scope.launch {
@@ -636,36 +642,6 @@ fun FileBrowserScreen(
                 Text("$pickActionLabel — ${current.name}", fontWeight = FontWeight.Bold)
             }
         }
-        // v0.9.0: bulk action bar — the marked files go to the
-        // destination picker (account, then folder).
-        if (selectionMode) {
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = {
-                        val marked = files.filter { it.id in selectedIds }
-                        selectedIds = emptySet()
-                        onBulkCopy?.invoke(marked)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Copy to Drive", fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        val marked = files.filter { it.id in selectedIds }
-                        selectedIds = emptySet()
-                        onBulkMove?.invoke(marked)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A32)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Move", color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-            }
-        }
     }
 
     // v0.8.1: floating upload button — it follows you into every
@@ -732,6 +708,95 @@ fun FileBrowserScreen(
             Icon(
                 if (showUploadMenu) Icons.Filled.Close else Icons.Filled.Upload,
                 contentDescription = "Upload to this folder"
+            )
+        }
+    }
+
+    // v0.11.1: bulk action button — it replaces the old Copy/Move
+    // bottom bar. Tapping it opens the same little menu the upload
+    // button has: Copy to Drive, Move, and the new Download (save
+    // every marked file to the device). Visible only while files
+    // are marked; the upload button hides then.
+    if (selectionMode && !pickMode) {
+        if (showBulkMenu) {
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .background(Color(0xFF000000).copy(alpha = 0.45f))
+                    .clickable { showBulkMenu = false }
+            )
+            Column(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                Surface(
+                    color = Color(0xFF2A2A32),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.clickable {
+                        val marked = files.filter { it.id in selectedIds }
+                        selectedIds = emptySet()
+                        showBulkMenu = false
+                        onBulkCopy?.invoke(marked)
+                    }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = Color(0xFF4A90E2))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Copy to Drive", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Surface(
+                    color = Color(0xFF2A2A32),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.clickable {
+                        val marked = files.filter { it.id in selectedIds }
+                        selectedIds = emptySet()
+                        showBulkMenu = false
+                        onBulkMove?.invoke(marked)
+                    }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.DriveFileMove, contentDescription = null, tint = Color(0xFF4A90E2))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Move", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Surface(
+                    color = Color(0xFF2A2A32),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.clickable {
+                        val marked = files.filter { it.id in selectedIds }
+                        selectedIds = emptySet()
+                        showBulkMenu = false
+                        onBulkDownload?.invoke(marked)
+                    }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null, tint = Color(0xFF4A90E2))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Download", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        FloatingActionButton(
+            onClick = { showBulkMenu = !showBulkMenu },
+            containerColor = Color(0xFF4A90E2),
+            contentColor = Color.White,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+        ) {
+            Icon(
+                if (showBulkMenu) Icons.Filled.Close else Icons.Filled.MoreVert,
+                contentDescription = "Actions for selected files"
             )
         }
     }

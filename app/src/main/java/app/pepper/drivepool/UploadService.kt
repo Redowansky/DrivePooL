@@ -9,6 +9,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -554,9 +555,17 @@ class UploadService : Service() {
      *  listing. Drive sends no Content-Length for big downloads,
      *  so without it the progress callback reports total = -1 and
      *  the bar sits at 0% forever while bytes are actually flowing
-     *  — the listing size is the total instead. */
+     *  — the listing size is the total instead.
+     *  v0.11.5: RESUMABLE. A dropped connection used to throw the
+     *  whole file away ("Download failed. Nothing was saved.") and
+     *  the next try started from zero — a 3 GB file dying at 50%
+     *  lost 1.5 GB of progress. Now the partial file is kept, and
+     *  each attempt resumes from its real size with a Range
+     *  request and a fresh token. Up to 3 attempts; the last
+     *  failure reports how far it got and why, and a later tap on
+     *  Download picks up where it stopped. */
     private suspend fun saveOneFile(
-        token: String,
+        tokenProvider: suspend () -> String?,
         fileId: String,
         name: String,
         mime: String,
@@ -579,39 +588,166 @@ class UploadService : Service() {
                         "switch back to Downloads."
                 )
             }
-            // A file with the same name is replaced, not duplicated.
-            dir.findFile(name)?.delete()
-            val file = dir.createFile(mime, name)
+            val file = dir.findFile(name) ?: dir.createFile(mime, name)
                 ?: return SaveOutcome(ok = false, error = "Could not create the download.")
-            val ok = contentResolver.openOutputStream(file.uri)?.use { out ->
-                DriveApi.downloadToStream(token, fileId, out) { doneBytes, total ->
-                    onProgress(doneBytes, if (total > 0) total else knownSize)
+            return downloadWithResume(
+                tokenProvider, fileId, name, knownSize, onProgress,
+                openOut = { append ->
+                    contentResolver.openOutputStream(file.uri, if (append) "wa" else "w")
+                },
+                size = { file.length() },
+                delete = { file.delete() },
+                location = customFolder.second
+            )
+        }
+        val row = findDownloadRow(name) ?: run {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+            ) ?: return SaveOutcome(ok = false, error = "Could not create the download.")
+        }
+        return downloadWithResume(
+            tokenProvider, fileId, name, knownSize, onProgress,
+            openOut = { append ->
+                contentResolver.openOutputStream(row, if (append) "wa" else "w")
+            },
+            size = { downloadRowSize(row) },
+            delete = { contentResolver.delete(row, null, null) },
+            location = "Downloads"
+        )
+    }
+
+    /** One file, up to 3 attempts, resuming from the partial file
+     *  on disk. [openOut] opens the destination — append mode
+     *  after the first attempt. Returns ok only when the file on
+     *  disk is complete (or the size was unknown and a stream
+     *  finished cleanly). The partial file is NEVER deleted on
+     *  failure — the next tap on Download resumes it.
+     *
+     *  The resume offset is always re-read from the file itself
+     *  after each attempt: a stale size can only under-report,
+     *  and resuming from a smaller offset just rewrites the same
+     *  bytes identically — resuming from a larger one would leave
+     *  a hole, so the offset never comes from a counter. */
+    private suspend fun downloadWithResume(
+        tokenProvider: suspend () -> String?,
+        fileId: String,
+        name: String,
+        knownSize: Long,
+        onProgress: (Long, Long) -> Unit,
+        openOut: (append: Boolean) -> java.io.OutputStream?,
+        size: () -> Long,
+        delete: () -> Unit,
+        location: String
+    ): SaveOutcome {
+        // A complete file with the same name and size is already
+        // there — a re-tap after a finished download. Don't
+        // download it again.
+        var downloaded = size()
+        if (knownSize > 0 && downloaded >= knownSize) {
+            onProgress(downloaded, knownSize)
+            return SaveOutcome(ok = true, location = location)
+        }
+        var lastError = "unknown error"
+        repeat(3) { attempt ->
+            if (attempt > 0) {
+                update(
+                    "Downloading",
+                    "Connection dropped — picking up where it stopped…",
+                    if (knownSize > 0) downloaded.toFloat() / knownSize else 0f
+                )
+                kotlinx.coroutines.delay(if (attempt == 1) 1000L else 3000L)
+            }
+            val token = tokenProvider()
+                ?: return SaveOutcome(
+                    ok = false,
+                    error = "Could not get access. Sign in again and retry."
+                )
+            val append = downloaded > 0
+            var attemptOk = false
+            try {
+                val out = openOut(append)
+                if (out == null) {
+                    lastError = "could not open the download"
+                } else {
+                    out.use { stream ->
+                        val result = DriveApi.downloadToStream(
+                            token, fileId, stream,
+                            { done, total -> onProgress(done, if (total > 0) total else knownSize) },
+                            startByte = downloaded
+                        )
+                        when {
+                            result.rangeIgnored -> {
+                                // The server sent the whole file
+                                // from 0 — the partial would be
+                                // duplicated. Start clean on the
+                                // next attempt.
+                                delete()
+                                downloaded = 0
+                                lastError = "server restarted the file"
+                            }
+                            !result.ok -> lastError = result.error ?: "unknown error"
+                            else -> attemptOk = true
+                        }
+                    }
                 }
-            } ?: false
-            if (!ok) {
-                file.delete()
-                return SaveOutcome(ok = false, error = "Download failed. Nothing was saved.")
+            } catch (e: Exception) {
+                lastError = e.message ?: e.javaClass.simpleName
             }
-            return SaveOutcome(ok = true, location = customFolder.second)
-        }
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, name)
-            put(MediaStore.Downloads.MIME_TYPE, mime)
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-        }
-        val row = contentResolver.insert(
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
-        ) ?: return SaveOutcome(ok = false, error = "Could not create the download.")
-        val ok = contentResolver.openOutputStream(row)?.use { out ->
-            DriveApi.downloadToStream(token, fileId, out) { doneBytes, total ->
-                onProgress(doneBytes, if (total > 0) total else knownSize)
+            downloaded = size()
+            if (attemptOk) {
+                if (knownSize <= 0 || downloaded >= knownSize) {
+                    return SaveOutcome(ok = true, location = location)
+                }
+                // The stream ended cleanly but short — resume the
+                // rest instead of calling it done.
+                lastError = "stopped short at ${formatBytes(downloaded)}"
             }
-        } ?: false
-        if (!ok) {
-            contentResolver.delete(row, null, null)
-            return SaveOutcome(ok = false, error = "Download failed. Nothing was saved.")
         }
-        return SaveOutcome(ok = true, location = "Downloads")
+        val have = if (knownSize > 0) {
+            "Download stopped at ${formatBytes(downloaded)} of ${formatBytes(knownSize)}"
+        } else {
+            "Download stopped at ${formatBytes(downloaded)}"
+        }
+        return SaveOutcome(
+            ok = false,
+            error = "$have — $lastError. Tap Download again to pick up where it stopped."
+        )
+    }
+
+    /** A Downloads row with this display name, if one is already
+     *  there — a partial from an earlier attempt, or a finished
+     *  file being re-downloaded. */
+    private fun findDownloadRow(name: String): Uri? {
+        return try {
+            contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME}=?",
+                arrayOf(name),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(0)
+                    )
+                } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    /** Current size of a Downloads row, from the MediaStore SIZE
+     *  column. */
+    private fun downloadRowSize(row: Uri): Long {
+        return try {
+            contentResolver.query(row, arrayOf(MediaStore.Downloads.SIZE), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+                ?: 0L
+        } catch (_: Exception) { 0L }
     }
 
     private suspend fun runDownload(intent: Intent, jobId: String) {
@@ -627,10 +763,12 @@ class UploadService : Service() {
             )
         }
         try {
-            val token = try {
-                Auth.accessTokenForEmail(this, email)
-            } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
-            val result = saveOneFile(token, fileId, name, mime, size) { doneBytes, total ->
+            // v0.11.5: a fresh token per download attempt — the
+            // one fetched up front may have expired mid-batch.
+            val tokenProvider: suspend () -> String? = {
+                try { Auth.accessTokenForEmail(this, email) } catch (_: Exception) { null }
+            }
+            val result = saveOneFile(tokenProvider, fileId, name, mime, size) { doneBytes, total ->
                 val frac = if (total > 0) doneBytes.toFloat() / total else 0f
                 val label = if (total > 0) {
                     "Saving $name — ${(frac * 100).toInt()}% · " +
@@ -671,9 +809,11 @@ class UploadService : Service() {
         val failed = mutableListOf<String>()
         var location: String? = null
         try {
-            val token = try {
-                Auth.accessTokenForEmail(this, email)
-            } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
+            // v0.11.5: a fresh token per file attempt, same as the
+            // single download — the up-front one may expire mid-batch.
+            val tokenProvider: suspend () -> String? = {
+                try { Auth.accessTokenForEmail(this, email) } catch (_: Exception) { null }
+            }
             for (i in ids.indices) {
                 val name = names.getOrNull(i) ?: "file"
                 val mime = mimes.getOrNull(i) ?: "application/octet-stream"
@@ -682,7 +822,7 @@ class UploadService : Service() {
                     continue
                 }
                 val result = saveOneFile(
-                    token, ids[i], name, mime, sizes.getOrNull(i) ?: 0L
+                    tokenProvider, ids[i], name, mime, sizes.getOrNull(i) ?: 0L
                 ) { doneBytes, fileTotal ->
                     val fileFrac = if (fileTotal > 0) doneBytes.toFloat() / fileTotal else 0f
                     val overall = (saved + fileFrac) / total

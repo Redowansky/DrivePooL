@@ -212,27 +212,57 @@ object DriveApi {
             FilePage(files, json.optString("nextPageToken", "").takeIf { it.isNotEmpty() })
         }
 
+    /** Result of one download attempt. [position] is the absolute
+     *  byte offset reached in the file (start byte + bytes written
+     *  this attempt). [rangeIgnored] means the server sent the
+     *  whole file from 0 despite the Range request — writing it
+     *  would duplicate the partial file, so the caller restarts
+     *  from scratch instead. */
+    data class DownloadResult(
+        val ok: Boolean,
+        val position: Long = 0,
+        val error: String? = null,
+        val rangeIgnored: Boolean = false
+    )
+
     /** Streams a file's bytes into [out] (used for Save to device —
      *  straight into the Downloads entry, no temp copy on a tight
-     *  phone). Returns false on failure. Native Google files
-     *  (Docs/Sheets/Slides) cannot be downloaded with alt=media;
-     *  the caller checks the MIME type first. */
+     *  phone). Native Google files (Docs/Sheets/Slides) cannot be
+     *  downloaded with alt=media; the caller checks the MIME type
+     *  first. v0.11.5: [startByte] resumes a partial download with
+     *  a Range request, and the result says how far it got and why
+     *  it stopped instead of a bare false. */
     suspend fun downloadToStream(
         token: String,
         fileId: String,
         out: java.io.OutputStream,
-        onProgress: (downloaded: Long, total: Long) -> Unit
-    ): Boolean = withContext(Dispatchers.IO) {
+        onProgress: (downloaded: Long, total: Long) -> Unit,
+        startByte: Long = 0
+    ): DownloadResult = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder()
+            val reqBuilder = Request.Builder()
                 .url("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
-                .addHeader("Authorization", "Bearer $token").build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext false
-                val body = resp.body ?: return@withContext false
-                val total = body.contentLength()
+                .addHeader("Authorization", "Bearer $token")
+            if (startByte > 0) reqBuilder.addHeader("Range", "bytes=$startByte-")
+            client.newCall(reqBuilder.build()).execute().use { resp ->
+                if (startByte > 0 && resp.code == 200) {
+                    return@withContext DownloadResult(
+                        ok = false, error = "server restarted the file",
+                        rangeIgnored = true
+                    )
+                }
+                if (!resp.isSuccessful) {
+                    return@withContext DownloadResult(
+                        ok = false, error = "server refused (HTTP ${resp.code})"
+                    )
+                }
+                val body = resp.body
+                    ?: return@withContext DownloadResult(ok = false, error = "empty response")
+                // A 206's length is only the remaining bytes.
+                val remaining = body.contentLength()
+                val total = if (remaining > 0 && startByte > 0) remaining + startByte else remaining
                 val buf = ByteArray(64 * 1024)
-                var done = 0L
+                var done = startByte
                 body.byteStream().use { input ->
                     var read: Int
                     while (input.read(buf).also { read = it } != -1) {
@@ -241,9 +271,11 @@ object DriveApi {
                         onProgress(done, total)
                     }
                 }
+                DownloadResult(ok = true, position = done)
             }
-            true
-        } catch (_: Exception) { false }
+        } catch (e: Exception) {
+            DownloadResult(ok = false, error = e.message ?: e.javaClass.simpleName)
+        }
     }
 
     /** Streams a file's bytes into [dest] (used for the move fallback
@@ -255,7 +287,7 @@ object DriveApi {
         onProgress: (downloaded: Long, total: Long) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         dest.outputStream().use { out ->
-            downloadToStream(token, fileId, out, onProgress)
+            downloadToStream(token, fileId, out, onProgress).ok
         }
     }
 

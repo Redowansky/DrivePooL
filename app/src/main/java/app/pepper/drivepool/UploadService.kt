@@ -528,17 +528,23 @@ class UploadService : Service() {
     )
 
     /** "368 MB of 2.99 GB" — the download labels show how much
-     *  has actually arrived, not just a percentage. */
+     *  has actually arrived, not just a percentage.
+     *
+     *  v0.11.4: this had an off-by-one — the unit list started at
+     *  "KB" while the value started in bytes, so the first divide
+     *  already pointed at "MB" and every label came out 1024x too
+     *  big ("159.6 GB of 2.8 TB" for a 3 GB file — the bar itself
+     *  was right, it divides raw bytes, only the text lied). The
+     *  list now starts at "B" so value and unit move together. */
     private fun formatBytes(bytes: Long): String {
-        if (bytes < 1024) return "$bytes B"
-        val units = arrayOf("KB", "MB", "GB", "TB")
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
         var value = bytes.toDouble()
         var unit = 0
         while (value >= 1024 && unit < units.size - 1) {
             value /= 1024
             unit++
         }
-        return "%.1f %s".format(value, units[unit])
+        return if (unit == 0) "$bytes B" else "%.1f %s".format(value, units[unit])
     }
 
     /** Save to device (v0.10.0): streams a file straight into the

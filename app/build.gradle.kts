@@ -12,8 +12,8 @@ android {
         applicationId = "app.pepper.drivepool"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "0.11.1"
+        versionCode = 23
+        versionName = "0.11.2"
     }
 
     signingConfigs {

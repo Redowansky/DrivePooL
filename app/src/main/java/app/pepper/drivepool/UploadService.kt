@@ -172,7 +172,8 @@ class UploadService : Service() {
             email: String,
             fileId: String,
             fileName: String,
-            mime: String
+            mime: String,
+            fileSize: Long = 0
         ) {
             val intent = Intent(ctx, UploadService::class.java).apply {
                 action = ACTION_DOWNLOAD
@@ -181,6 +182,7 @@ class UploadService : Service() {
                 putExtra("fileId", fileId)
                 putExtra("fileName", fileName)
                 putExtra("mime", mime)
+                putExtra("fileSize", fileSize)
             }
             ctx.startForegroundService(intent)
         }
@@ -198,6 +200,7 @@ class UploadService : Service() {
                 putStringArrayListExtra("fileIds", ArrayList(files.map { it.id }))
                 putStringArrayListExtra("fileNames", ArrayList(files.map { it.name }))
                 putStringArrayListExtra("fileMimes", ArrayList(files.map { it.mimeType }))
+                putExtra("fileSizes", files.map { it.size }.toLongArray())
             }
             ctx.startForegroundService(intent)
         }
@@ -524,14 +527,34 @@ class UploadService : Service() {
         val error: String? = null
     )
 
+    /** "368 MB of 2.99 GB" — the download labels show how much
+     *  has actually arrived, not just a percentage. */
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = arrayOf("KB", "MB", "GB", "TB")
+        var value = bytes.toDouble()
+        var unit = 0
+        while (value >= 1024 && unit < units.size - 1) {
+            value /= 1024
+            unit++
+        }
+        return "%.1f %s".format(value, units[unit])
+    }
+
     /** Save to device (v0.10.0): streams a file straight into the
      *  phone's download folder — no temp copy on a tight phone.
-     *  The folder is the one picked in Settings, or Downloads. */
+     *  The folder is the one picked in Settings, or Downloads.
+     *  v0.11.2: [knownSize] is the file's size from the Drive
+     *  listing. Drive sends no Content-Length for big downloads,
+     *  so without it the progress callback reports total = -1 and
+     *  the bar sits at 0% forever while bytes are actually flowing
+     *  — the listing size is the total instead. */
     private suspend fun saveOneFile(
         token: String,
         fileId: String,
         name: String,
         mime: String,
+        knownSize: Long = 0,
         onProgress: (Long, Long) -> Unit
     ): SaveOutcome {
         // v0.11.0: a download folder picked in Settings — write
@@ -555,7 +578,9 @@ class UploadService : Service() {
             val file = dir.createFile(mime, name)
                 ?: return SaveOutcome(ok = false, error = "Could not create the download.")
             val ok = contentResolver.openOutputStream(file.uri)?.use { out ->
-                DriveApi.downloadToStream(token, fileId, out, onProgress)
+                DriveApi.downloadToStream(token, fileId, out) { doneBytes, total ->
+                    onProgress(doneBytes, if (total > 0) total else knownSize)
+                }
             } ?: false
             if (!ok) {
                 file.delete()
@@ -572,7 +597,9 @@ class UploadService : Service() {
             MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
         ) ?: return SaveOutcome(ok = false, error = "Could not create the download.")
         val ok = contentResolver.openOutputStream(row)?.use { out ->
-            DriveApi.downloadToStream(token, fileId, out, onProgress)
+            DriveApi.downloadToStream(token, fileId, out) { doneBytes, total ->
+                onProgress(doneBytes, if (total > 0) total else knownSize)
+            }
         } ?: false
         if (!ok) {
             contentResolver.delete(row, null, null)
@@ -586,6 +613,7 @@ class UploadService : Service() {
         val fileId = intent.getStringExtra("fileId") ?: return fail("No file to save.")
         val name = intent.getStringExtra("fileName") ?: "file"
         val mime = intent.getStringExtra("mime") ?: "application/octet-stream"
+        val size = intent.getLongExtra("fileSize", 0)
         if (isGoogleDocsFile(mime)) {
             return fail(
                 "“$name” is a Google Docs file — it can't be downloaded " +
@@ -596,9 +624,15 @@ class UploadService : Service() {
             val token = try {
                 Auth.accessTokenForEmail(this, email)
             } catch (_: Exception) { null } ?: return fail("Could not get access for $email.")
-            val result = saveOneFile(token, fileId, name, mime) { doneBytes, total ->
+            val result = saveOneFile(token, fileId, name, mime, size) { doneBytes, total ->
                 val frac = if (total > 0) doneBytes.toFloat() / total else 0f
-                update("Downloading", "Saving $name — ${(frac * 100).toInt()}%", frac)
+                val label = if (total > 0) {
+                    "Saving $name — ${(frac * 100).toInt()}% · " +
+                        "${formatBytes(doneBytes)} of ${formatBytes(total)}"
+                } else {
+                    "Saving $name — ${formatBytes(doneBytes)}"
+                }
+                update("Downloading", label, frac)
             }
             if (!result.ok) return fail(result.error ?: "Download failed.")
             done("Downloading", "Saved $name to ${result.location}.")
@@ -624,6 +658,8 @@ class UploadService : Service() {
             ?: List(ids.size) { "file" }
         val mimes = intent.getStringArrayListExtra("fileMimes")
             ?: List(ids.size) { "application/octet-stream" }
+        val sizes = intent.getLongArrayExtra("fileSizes")
+            ?: LongArray(ids.size) { 0L }
         val total = ids.size
         var saved = 0
         val failed = mutableListOf<String>()
@@ -639,10 +675,20 @@ class UploadService : Service() {
                     failed += "$name (Google Docs file)"
                     continue
                 }
-                val result = saveOneFile(token, ids[i], name, mime) { doneBytes, fileTotal ->
+                val result = saveOneFile(
+                    token, ids[i], name, mime, sizes.getOrNull(i) ?: 0L
+                ) { doneBytes, fileTotal ->
                     val fileFrac = if (fileTotal > 0) doneBytes.toFloat() / fileTotal else 0f
                     val overall = (saved + fileFrac) / total
-                    update("Downloading", "Saving ${saved + 1} of $total — $name", overall)
+                    val label = if (fileTotal > 0) {
+                        "Saving ${saved + 1} of $total — $name — " +
+                            "${(fileFrac * 100).toInt()}% · " +
+                            "${formatBytes(doneBytes)} of ${formatBytes(fileTotal)}"
+                    } else {
+                        "Saving ${saved + 1} of $total — $name — " +
+                            formatBytes(doneBytes)
+                    }
+                    update("Downloading", label, overall)
                 }
                 if (result.ok) {
                     saved++

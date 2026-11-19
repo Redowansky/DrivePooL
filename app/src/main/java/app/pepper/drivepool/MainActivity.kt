@@ -809,7 +809,9 @@ class MainActivity : ComponentActivity() {
      *  download progress can actually show in the shade. */
     private fun downloadToDevice(email: String, file: DriveApi.DriveFile) {
         withNotificationPermission {
-            UploadService.startDownload(this, email, file.id, file.name, file.mimeType)
+            UploadService.startDownload(
+                this, email, file.id, file.name, file.mimeType, file.size
+            )
         }
     }
 

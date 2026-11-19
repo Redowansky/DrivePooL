@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.11.5-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.11.6-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.11.5)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.11.6)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -98,6 +98,7 @@
 - [x] **v0.11.2** — **The download bar actually moves** — Drive sends no file size with big downloads, so the bar had nothing to divide by and sat at 0% while bytes were flowing. The app now uses the size it already knows from the file listing, so the percentage climbs in real time — and the label shows it too, like "Saving INTERACTIVE_MUSIC.rpf — 12% · 368 MB of 2.99 GB"
 - [x] **v0.11.3** — **Silent updater, the F-Droid way** — a background worker checks for updates every 6 hours, downloads a new version by itself (SHA-256 verified), and installs it with a PackageInstaller session — no tap at all when Android allows it, which it does for a self-update on Android 12+ when the app holds the install permission, declares `UPDATE_PACKAGES_WITHOUT_USER_ACTION`, and targets a high enough API (DrivePool targets 34, the Android 16 bar). The new **Silent Updater** channel carries only the exceptions: a "tap to install" note if Android still wants one confirmation, a failure note with a retry tap, and "DrivePool updated" once the new build lands. One honest bootstrap catch: the very first self-update may still ask once — from the second update on, new versions just land
 - [x] **v0.11.5** — **Downloads resume instead of restarting** — a dropped connection used to throw the whole file away ("Download failed. Nothing was saved.") and the next try started from zero, so a 3 GB file dying at 50% lost 1.5 GB of progress. Now the partial file is kept, each attempt resumes from its real size with a Range request and a fresh login, up to 3 tries, and a failure finally says how far it got and why — "Download stopped at 1.5 GB of 2.99 GB — connection reset. Tap Download again to pick up where it stopped." Also folded in: the download label stops lying (the v0.11.4 byte-formatter off-by-one — "159.6 GB of 2.8 TB" for a 3 GB file — never shipped on its own)
+- [x] **v0.11.6** — **Downloads stop dying on a 10-second stall** — v0.11.5's resume worked, but every attempt still used OkHttp's default 10 s read timeout, so a stall longer than 10 s killed the stream ("timeout") and the retries, fired 1 s / 3 s later, hit the same stalled connection again at the same 1.5 GB. Downloads now get their own client with a 120 s read timeout (a download that stalls for two minutes is still a live download), and retries wait 5 s / 30 s so a short throttle window can pass first.
 
 ## 🤝 Contributing
 

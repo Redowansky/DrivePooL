@@ -660,7 +660,10 @@ class UploadService : Service() {
                     "Connection dropped — picking up where it stopped…",
                     if (knownSize > 0) downloaded.toFloat() / knownSize else 0f
                 )
-                kotlinx.coroutines.delay(if (attempt == 1) 1000L else 3000L)
+                // v0.11.6: longer gaps between attempts (was 1 s / 3 s)
+                // so a short throttle window on the carrier's side can
+                // pass before the next connection goes out.
+                kotlinx.coroutines.delay(if (attempt == 1) 5000L else 30000L)
             }
             val token = tokenProvider()
                 ?: return SaveOutcome(

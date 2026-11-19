@@ -19,9 +19,22 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.TimeUnit
 
 object DriveApi {
     private val client = OkHttpClient()
+
+    // v0.11.6: downloads get their own client — the shared client's
+    // OkHttp defaults give a 10 s read timeout, so any stall longer
+    // than 10 s killed a multi-GB stream ("timeout") even though the
+    // bytes would have resumed a moment later. A download that stalls
+    // for two minutes is still a live download; only a truly dead
+    // connection should fail, and the resume loop covers that.
+    private val downloadClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     data class Quota(val email: String, val used: Long, val limit: Long)
     data class FileStats(val count: Long, val totalBytes: Long)
@@ -244,7 +257,7 @@ object DriveApi {
                 .url("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
                 .addHeader("Authorization", "Bearer $token")
             if (startByte > 0) reqBuilder.addHeader("Range", "bytes=$startByte-")
-            client.newCall(reqBuilder.build()).execute().use { resp ->
+            downloadClient.newCall(reqBuilder.build()).execute().use { resp ->
                 if (startByte > 0 && resp.code == 200) {
                     return@withContext DownloadResult(
                         ok = false, error = "server restarted the file",

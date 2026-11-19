@@ -7,7 +7,7 @@
 ### Pool all your Google Drive accounts into one beautiful Android dashboard
 
 [![Build](https://github.com/Redowansky/DrivePooL/actions/workflows/android.yml/badge.svg)](https://github.com/Redowansky/DrivePooL/actions)
-[![Version](https://img.shields.io/badge/version-0.11.2-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
+[![Version](https://img.shields.io/badge/version-0.11.3-blue.svg)](https://github.com/Redowansky/DrivePooL/releases)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF.svg)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.09.00-4285F4.svg)](https://developer.android.com/jetpack/compose)
@@ -17,7 +17,7 @@
 
 > 2 × 15 GB free Drives? DrivePool shows **30 GB total — 29 GB free, 100% free** — in one pooled bar, with a coloured bar for each account underneath.
 
-[📥 Download the APK (v0.11.2)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
+[📥 Download the APK (v0.11.3)](https://pub-89e47025e7844f1eaf672a00cfdbba12.r2.dev/app/drivepool-debug.apk)
 
 </div>
 
@@ -96,6 +96,7 @@
 - [x] **v0.11.0** — **Settings** — a gear icon in the dashboard top bar opens a Settings screen. First setting: **Download folder** — pick any folder on your phone (including an SD card) and "Save to device" puts files there instead of Downloads; the choice is remembered, and a file with the same name is replaced, not duplicated. If the folder can't be opened anymore, saving tells you to pick it again instead of failing silently
 - [x] **v0.11.1** — **Download multiple files + a proper download notification** — when files are marked, the old Copy/Move bottom bar is replaced by a floating button that opens a menu with **Copy to Drive**, **Move**, and the new **Download**: every marked file saves to the device one after another, into the same folder a single download uses (the one from Settings), with the notification counting "Saving 3 of 25…" and naming any file that couldn't be saved. The notification channel is now **Transfers** instead of Uploads, and a download shows a **download arrow** with the same live progress bar uploads have — the permission is now asked for downloads too, so the progress can actually show
 - [x] **v0.11.2** — **The download bar actually moves** — Drive sends no file size with big downloads, so the bar had nothing to divide by and sat at 0% while bytes were flowing. The app now uses the size it already knows from the file listing, so the percentage climbs in real time — and the label shows it too, like "Saving INTERACTIVE_MUSIC.rpf — 12% · 368 MB of 2.99 GB"
+- [x] **v0.11.3** — **Silent updater, the F-Droid way** — a background worker checks for updates every 6 hours, downloads a new version by itself (SHA-256 verified), and installs it with a PackageInstaller session — no tap at all when Android allows it, which it does for a self-update on Android 12+ when the app holds the install permission, declares `UPDATE_PACKAGES_WITHOUT_USER_ACTION`, and targets a high enough API (DrivePool targets 34, the Android 16 bar). The new **Silent Updater** channel carries only the exceptions: a "tap to install" note if Android still wants one confirmation, a failure note with a retry tap, and "DrivePool updated" once the new build lands. One honest bootstrap catch: the very first self-update may still ask once — from the second update on, new versions just land
 
 ## 🤝 Contributing
 

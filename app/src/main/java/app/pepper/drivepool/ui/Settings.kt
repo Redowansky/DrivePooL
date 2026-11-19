@@ -43,6 +43,8 @@ fun SettingsScreen(
     downloadFolderName: String?,
     onPickDownloadFolder: () -> Unit,
     onResetDownloadFolder: () -> Unit,
+    stagedVersionName: String? = null,
+    onInstallStaged: () -> Unit = {},
     versionName: String,
     onBack: () -> Unit
 ) {
@@ -103,6 +105,36 @@ fun SettingsScreen(
                 TextButton(onClick = onResetDownloadFolder) {
                     Text("Use Downloads instead", color = Color(0xFF4A90E2))
                 }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Text(
+            "Updates", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(CardBg)
+                .padding(16.dp)
+        ) {
+            Text("Silent updater", color = Color.White, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Checks for updates in the background and installs " +
+                    "them itself — no tap at all, the F-Droid way. " +
+                    "The very first update may still ask once; after " +
+                    "that, new versions just land.",
+                color = Color(0xFF9A9AA5), fontSize = 14.sp
+            )
+            if (stagedVersionName != null) {
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onInstallStaged,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A90E2))
+                ) { Text("Install v$stagedVersionName now", fontWeight = FontWeight.Bold) }
             }
         }
 

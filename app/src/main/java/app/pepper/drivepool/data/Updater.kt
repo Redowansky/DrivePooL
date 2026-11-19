@@ -91,6 +91,86 @@ object Updater {
         data object Done : DownloadState
     }
 
+    /** The staged update APK — the same file the banner download
+     *  and the v0.11.3 silent updater both write to. */
+    fun stagedFile(ctx: Context): File {
+        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: ctx.cacheDir
+        return File(dir, "drivepool-update.apk")
+    }
+
+    /** Downloads the APK and verifies it, without any UI and
+     *  without opening the installer. The v0.11.3 silent updater's
+     *  background worker uses this: it stages the file and lets
+     *  the user install it with one tap when ready. Returns true
+     *  when the staged file is good to install. */
+    suspend fun downloadToFile(
+        ctx: Context,
+        apkUrl: String,
+        expectedSha256: String?,
+        onProgress: ((Long, Long) -> Unit)? = null
+    ): Boolean {
+        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: ctx.cacheDir
+        val tmp = File(dir, "drivepool-update.apk.tmp")
+        val file = stagedFile(ctx)
+        return try {
+            val dlClient = client.newBuilder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .build()
+            val req = Request.Builder().url(apkUrl)
+                .header("User-Agent", UA)
+                .header("Cache-Control", "no-cache")
+                .build()
+            val (downloaded, total) = withContext(Dispatchers.IO) {
+                dlClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        throw java.io.IOException("server refused (HTTP ${resp.code})")
+                    }
+                    val body = resp.body ?: throw java.io.IOException("empty response")
+                    val totalBytes = body.contentLength()
+                    var done = 0L
+                    var lastPosted = 0L
+                    body.byteStream().use { input ->
+                        FileOutputStream(tmp).use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                out.write(buf, 0, n)
+                                done += n
+                                if (done - lastPosted >= 256 * 1024) {
+                                    lastPosted = done
+                                    onProgress?.invoke(done, totalBytes)
+                                }
+                            }
+                        }
+                    }
+                    done to totalBytes
+                }
+            }
+            if (downloaded == 0L) throw java.io.IOException("empty download (0 bytes)")
+            if (total > 0 && downloaded != total) {
+                throw java.io.IOException("incomplete download ($downloaded / $total bytes)")
+            }
+            if (!expectedSha256.isNullOrBlank()) {
+                val actual = withContext(Dispatchers.IO) { sha256Hex(tmp) }
+                if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
+                    throw java.io.IOException(
+                        "SHA-256 mismatch — the download doesn't match the " +
+                            "published hash, not installing."
+                    )
+                }
+            }
+            tmp.renameTo(file)
+            true
+        } catch (_: Exception) {
+            try { tmp.delete() } catch (_: Exception) {}
+            false
+        }
+    }
+
     /** Downloads the APK directly with OkHttp (no DownloadManager),
      *  reporting each state through onState (always on the main
      *  thread). On success the installer opens automatically.
@@ -124,66 +204,17 @@ object Updater {
             }
             return
         }
-        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            ?: ctx.cacheDir
-        val tmp = File(dir, "drivepool-update.apk.tmp")
-        val file = File(dir, "drivepool-update.apk")
         try {
-            val dlClient = client.newBuilder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .build()
-            val req = Request.Builder().url(apkUrl)
-                .header("User-Agent", UA)
-                .header("Cache-Control", "no-cache")
-                .build()
-            val (downloaded, total) = withContext(Dispatchers.IO) {
-                dlClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        throw java.io.IOException("server refused (HTTP ${resp.code})")
-                    }
-                    val body = resp.body ?: throw java.io.IOException("empty response")
-                    val totalBytes = body.contentLength()
-                    var done = 0L
-                    var lastPosted = 0L
-                    body.byteStream().use { input ->
-                        FileOutputStream(tmp).use { out ->
-                            val buf = ByteArray(64 * 1024)
-                            while (true) {
-                                val n = input.read(buf)
-                                if (n < 0) break
-                                out.write(buf, 0, n)
-                                done += n
-                                if (done - lastPosted >= 256 * 1024) {
-                                    lastPosted = done
-                                    withContext(Dispatchers.Main) {
-                                        onState(DownloadState.Progress(done, totalBytes))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    done to totalBytes
-                }
+            // The banner dialog reads the state on the main thread;
+            // downloadToFile reports progress from its IO thread.
+            val main = android.os.Handler(android.os.Looper.getMainLooper())
+            val ok = downloadToFile(ctx, apkUrl, expectedSha256) { done, total ->
+                main.post { onState(DownloadState.Progress(done, total)) }
             }
-            if (downloaded == 0L) throw java.io.IOException("empty download (0 bytes)")
-            if (total > 0 && downloaded != total) {
-                throw java.io.IOException("incomplete download ($downloaded / $total bytes)")
-            }
-            if (!expectedSha256.isNullOrBlank()) {
-                val actual = withContext(Dispatchers.IO) { sha256Hex(tmp) }
-                if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
-                    throw java.io.IOException(
-                        "SHA-256 mismatch — the download doesn't match the " +
-                            "published hash, not installing."
-                    )
-                }
-            }
-            tmp.renameTo(file)
+            if (!ok) throw java.io.IOException("download failed — check the connection and retry")
             onState(DownloadState.Done)
-            installDownloaded(ctx, file)
+            installFile(ctx, stagedFile(ctx))
         } catch (e: Exception) {
-            try { tmp.delete() } catch (_: Exception) {}
             onState(
                 DownloadState.Failed(
                     "${e.javaClass.simpleName}: ${e.message ?: "no detail"}"
@@ -205,8 +236,11 @@ object Updater {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** Opens the system installer for the downloaded APK. */
-    private fun installDownloaded(ctx: Context, file: File) {
+    /** Opens the system installer for the downloaded APK.
+     *  v0.11.3: public now — the silent updater's notification
+     *  and the Settings screen install the staged file through
+     *  this same door. */
+    fun installFile(ctx: Context, file: File) {
         if (!file.exists()) {
             Toast.makeText(
                 ctx,

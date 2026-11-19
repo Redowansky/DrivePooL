@@ -41,9 +41,13 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import java.io.File
 import app.pepper.drivepool.data.ACCOUNT_COLORS
+import android.provider.Settings
+import android.widget.Toast
 import app.pepper.drivepool.data.Auth
 import app.pepper.drivepool.data.DriveAccount
 import app.pepper.drivepool.data.DriveApi
+import app.pepper.drivepool.data.SelfUpdateInstaller
+import app.pepper.drivepool.data.SilentUpdater
 import app.pepper.drivepool.data.Store
 import app.pepper.drivepool.data.Updater
 import app.pepper.drivepool.data.UploadState
@@ -253,8 +257,17 @@ class MainActivity : ComponentActivity() {
         // notification toggle exists before any upload runs, and ask
         // once for the runtime notification permission (Android 13+).
         UploadService.createNotificationChannel(this)
+        // v0.11.3: the silent updater — its own channel, plus the
+        // 6-hourly background check. KEEP means this never doubles up.
+        SilentUpdater.createChannel(this)
+        SilentUpdater.schedule(this)
         withNotificationPermission {}
         checkForUpdate()
+        // The silent updater's notification opened the app to
+        // install a staged update — do it straight away.
+        if (intent?.action == SilentUpdater.ACTION_INSTALL_STAGED) {
+            lifecycleScope.launch { installStagedUpdate() }
+        }
         setContent {
             DrivePoolTheme {
                 when (val s = screen) {
@@ -414,6 +427,9 @@ class MainActivity : ComponentActivity() {
                                 Store.saveDownloadFolder(this, null, null)
                                 downloadFolder = null
                             },
+                            stagedVersionName = SilentUpdater.stagedVersion(this)?.second
+                                ?.takeIf { it.isNotBlank() },
+                            onInstallStaged = { installStagedUpdate() },
                             versionName = BuildConfig.VERSION_NAME,
                             onBack = { screen = Screen.Dashboard }
                         )
@@ -1063,11 +1079,63 @@ class MainActivity : ComponentActivity() {
     private fun startUpdateDownload() {
         val info = updateInfo ?: return
         if (downloadState is Updater.DownloadState.Progress) return
+        // v0.11.3: the silent updater already downloaded this very
+        // build — install the staged file instead of downloading
+        // the same APK a second time.
+        val staged = SilentUpdater.stagedVersion(this)
+        if (staged?.first == info.versionCode && Updater.stagedFile(this).exists()) {
+            installStagedUpdate()
+            return
+        }
         lifecycleScope.launch {
             // v0.8.0: the published SHA-256 is verified before install.
             Updater.download(this@MainActivity, info.apkUrl, info.sha256) { state ->
                 downloadState = state
             }
+        }
+    }
+
+    /** Install the update the silent updater already staged.
+     *  The one-time "allow installs" toggle is checked here, same
+     *  as the banner download — without it the installer fails
+     *  with no useful message. v0.11.3: installs through a
+     *  PackageInstaller session (F-Droid style) — silent when
+     *  Android allows it, the system's own confirm screen when
+     *  it still wants one tap; the old ACTION_VIEW installer is
+     *  the fallback if the session can't even be created. */
+    private fun installStagedUpdate() {
+        val staged = SilentUpdater.stagedVersion(this) ?: run {
+            error = "No downloaded update waiting yet."
+            return
+        }
+        val file = Updater.stagedFile(this)
+        if (!file.exists()) {
+            SilentUpdater.clearStaged(this)
+            error = "The downloaded update is gone — tap Update to download it again."
+            checkForUpdate()
+            return
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 26 &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            Toast.makeText(
+                this,
+                "Allow installs for DrivePool once, then tap Install again",
+                Toast.LENGTH_LONG
+            ).show()
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            } catch (_: Exception) {
+            }
+            return
+        }
+        if (!SelfUpdateInstaller.install(this, file)) {
+            Updater.installFile(this, file)
         }
     }
 }

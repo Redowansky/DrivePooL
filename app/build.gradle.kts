@@ -12,8 +12,8 @@ android {
         applicationId = "app.pepper.drivepool"
         minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "0.11.2"
+        versionCode = 24
+        versionName = "0.11.3"
     }
 
     signingConfigs {
@@ -78,4 +78,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // v0.10.0: reading a picked local folder tree (upload a folder).
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // v0.11.3: the silent updater's 6-hourly background check.
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

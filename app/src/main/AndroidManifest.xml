@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- v0.11.3: the silent updater — Android 12+ lets an app
+         update ITSELF with no confirmation when this is declared
+         and the session asks for no user action. -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- v0.6.0: background uploads run as a dataSync foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -49,6 +53,28 @@
             android:name=".UploadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- v0.11.3: after the app replaces itself, clear the staged
+             update and post "DrivePool updated" on the Silent Updater
+             channel. -->
+        <receiver
+            android:name=".UpdateInstalledReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- v0.11.3: the answer to a silent self-install session —
+             installed (nothing to do), needs one tap (show the
+             system's confirm screen), or failed (notify to retry). -->
+        <receiver
+            android:name=".UpdateInstallReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="app.pepper.drivepool.UPDATE_INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>

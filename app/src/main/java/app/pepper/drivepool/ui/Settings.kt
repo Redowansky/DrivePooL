@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pepper.drivepool.ui.theme.CardBg
 
 /** Settings (v0.11.0): a plain screen, opened from the gear icon
  *  on the dashboard. First setting: where "Save to device" puts

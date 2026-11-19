@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import app.pepper.drivepool.data.Auth
 import app.pepper.drivepool.data.DriveApi
+import app.pepper.drivepool.data.Store
 import app.pepper.drivepool.data.ResumeStore
 import app.pepper.drivepool.data.ResumableUpload
 import app.pepper.drivepool.data.TransferState
